@@ -9,7 +9,6 @@
 //#include <stdio.h>
 //#include <stdlib.h>  /* added 08 Oct 31 */
 
-
 #include "vcsLib.h"
 
 #define STR_HELPER(x) #x
@@ -75,12 +74,11 @@
 #define BALL_2_CLKS          0x10
 #define BALL_1_CLK           0x00
 
-// aus dem ASM-Header:
+
 #define NTSC 1
 #define PAL 0
 #define PAL60 0
 
-// die vom User gewünschten Defines (wie im ASM)
 #define FREE_CYCLES_AT_KERNEL_END 0
 #define EVEN_ROWS_1_4             1
 #define ODD_ROWS_1_4              4
@@ -92,20 +90,17 @@
 #define FREE_CYCLES               0
 #define SET_SP                    1
 
-// Farben: in ASM waren das symbolische Verweise (COL_00, COL_80). 
-// Hier initial auf die erwarteten Werte setzen (COL_00 = 0x00, COL_80 = 0x80).
 #define COL_1E      0x1e
 #define COL_00      0x00
 #define COL_0E      0x0e
 
-// NTSC
+// NTSC Colors
 //#define COL_80      0x80
 //#define COL_94      0x94
 
-// PAL
+// PAL Colors
 #define COL_94   0xb4
 #define COL_80   0xd0
-
 
 // use vcsLib ColorLookup array later!
 
@@ -114,88 +109,8 @@
 #define TEXT_COLOR_0        COL_0E
 #define TEXT_COLOR_1        COL_0E
 
-// COL_BLEND war im ASM = -2
-#define COL_BLEND (-2)
-
 void StartTinyBasic(char*);
 void Interp(void);
-
-// note: sizeof(CustomOverblank) MUST be exactly 49 bytes and end on "jmp $1000"
-static const uint8_t CustomOverblank[] =
-{
-/*
-    0xea,				//   nop            ; add nops to make sure the code is 49 bytes long
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xea,				//   nop
-	0xa0, 0x1E,			//   ldy #$1E        ; 30 lines over Overscan
-	0xa2, 0x02,			//   ldx #2
-						// Overscan:   
-	0x85, 0x02,			//   sta WSYNC       ; wait for next scanline
-	0x88,				//   dey
-	0xd0, 0xfb, 		//   bne Overscan
-						// VerticalSync:
-	0x86, 0x00,			//   stx VSYNC
-	0x85, 0x02,			//   sta WSYNC
-	0x85, 0x02,			//   sta WSYNC
-	0x85, 0x02,			//   sta WSYNC
-	0xa2, 0x00,			//   ldx #0
-	0x86, 0x00,			//   stx VSYNC
-	0xa0, 0x1C,			//   ldy #$1C        ; 28 lines of Vertical Blank
-						// VerticalBlank:   
-	0x85, 0x02,			//   sta WSYNC       ; wait for next scanline
-	0x88,				//   dey
-	0xd0, 0xfb,			//   bne VerticalBlank
-						// WaitForCart:
-	0xae, 0xff, 0x1f,	//   ldx $1fff
-	0xd0, 0xfb,			//   bne WaitForCart
-	0x4c, 0x00, 0x10	//   jmp $1000
-*/
-    0xEA,                   // NOP x1 padding to align later parts 
-                            // Overscan:
-    0xAD, 0x84, 0x02,       // LDA INTIM            ; INTIM (single read) 
-//    0x20, 0xB1, 0x00,       // JSR ReadTimer
-    0xC9, 0x25,             // CMP #$25             ; threshold (safety) 
-    0xB0, 0xF9,             // BCS Overscan 
-						    // VerticalSync:
-    0xA2, 0x02,             // LDX #$02             ; VSync start 
-    0x86, 0x00,             // STX VSYNC            ; STX VSYNC (zero page $00) 
-//    0xAD, 0x84, 0x02,       // LDA INTIM            ; INTIM (single read) 
-    0x20, 0xB1, 0x00,       // JSR ReadTimer        ; ReadTimer between WSYNCs 
-    0x85, 0x02,             // STA WSYNC            ; STA WSYNC (1) 
-    0xAD, 0x84, 0x02,       // LDA INTIM            ; INTIM (single read) 
-//    0x20, 0xB1, 0x00,       // JSR ReadTimer        ; ReadTimer between WSYNCs 
-    0x85, 0x02,             // STA WSYNC            ; STA WSYNC (2) 
-//    0xAD, 0x84, 0x02,       // LDA INTIM            ; INTIM (single read) 
-    0x20, 0xB1, 0x00,       // JSR ReadTimer        ; ReadTimer between WSYNCs 
-    0x85, 0x02,             // STA WSYNC            ; STA WSYNC (3) 
-    0xA2, 0x00,             // LDX #$00             ; clear VSYNC 
-    0x86, 0x00,             // STX VSYNC            ; STX VSYNC (clear)
-                            // VerticalBlank:
-    0xAD, 0x84, 0x02,       // LDA INTIM            ; INTIM (single read) 
-//    0x20, 0xB1, 0x00,       // JSR ReadTimer        ; VBlank - poll timer 
-    0xC9, 0x01,             // CMP #$01             ; small-VBlank exit threshold (tunable)
-    0xB0, 0xF9,             // BCS VerticalBlank 
-    						// WaitForCart:
-    0xAD, 0x84, 0x02,       // LDA INTIM            ; INTIM (single read) 
-//    0x20, 0xB1, 0x00,       // JSR ReadTimer        ; VBlank - poll timer 
-    0xAE, 0xFF, 0x1F,       // LDX $1FFF            ; WaitForCart (poll cart flag) 
-    0xd0, 0xF8,             // BNE WaitForCart
-    0x4C, 0x00, 0x10,       // JMP $1000
-                            // ReadTimer: 
-    0xAD, 0x84, 0x02,       // LDA INTIM            ; INTIM (single read) 
-    0x60                    // RTS                  ; return to caller 
-// */
-};
 
 //---------------------------------
 //   Font Graphics
@@ -312,9 +227,6 @@ char active_char = '\0';
 
 __attribute__((optimize("O3","no-tree-loop-distribute-patterns")))
 RAM_FUNC void scroll_video_ram(){
-//        uint8_t *base = &videoRAM[0];
-//        scroll_video_ram(base);
-
   uint32_t *dst = (uint32_t *)&videoRAM[0];
   uint32_t *src = (uint32_t *)(dst + (TEXT_HEIGHT * 20 / 4) ); // Offset one text line
 
@@ -323,26 +235,13 @@ RAM_FUNC void scroll_video_ram(){
   while (words--) {
     *dst++ = *src++;
   }
+
   /* clear the freed tail */
   memset(&videoRAM[0] + (sizeof(videoRAM) - 260), 0, 240);
 }
 
-RAM_FUNC void vcsCopyCustomOverblankToRiotRam(){
-	for(int i = 0; i < sizeof(CustomOverblank); i++)
-	{
-		vcsWrite5((uint8_t)(0x80 + i), CustomOverblank[i]);
-	}
-}
-
-RAM_FUNC void vcsStartCustomOverblank(){
-    vcsLda2(73); // 72 * 64 ~= 4608 cycle
-    vcsSta4(TIM64T);
-    vcsLdx2(0xff);
-    vcsTxs2();
-    vcsStartOverblank();
-}
-
 RAM_FUNC void positioningTiaElement(uint8_t i, uint8_t x){
+    vcsSta3(WSYNC);
     vcsNop2n(2);
     while ( x >= 15){
         vcsNop2();
@@ -354,7 +253,6 @@ RAM_FUNC void positioningTiaElement(uint8_t i, uint8_t x){
     vcsJmp3();
     vcsNop2n(4);
     vcsSta3(RESP0 + i);
-    vcsSta3(WSYNC);
 }
 
 RAM_FUNC void KERNEL_1_line(const uint8_t *linePointer, uint8_t flag12) {
@@ -453,11 +351,11 @@ RAM_FUNC void renderDisplayFrame(uint8_t evenFrame) {
     const uint8_t *linePtr = videoRAM;
     bool kernel_a = false;
 
-    vcsSta3(WSYNC);
     positioningTiaElement(1, P1_POSITION);
     uint8_t missle_offset = evenFrame ? M0_POS : (M0_POS + 4);
     positioningTiaElement(2, missle_offset);
     positioningTiaElement(3, missle_offset);
+    vcsSta3(WSYNC);
     vcsSta3(HMOVE);
     
     vcsLda2(txtColorRAM[0]);
@@ -496,7 +394,7 @@ RAM_FUNC void renderDisplayFrame(uint8_t evenFrame) {
     vcsSta3(WSYNC);
     vcsSta3(WSYNC);
 
-    vcsLda2(COL_BACKGROUND);
+    vcsLda2(bkColorRAM[0]);
     vcsSta3(COLUBK);
 
     // DELAY_X_CYCLES 48
@@ -645,6 +543,25 @@ RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c){
     }
 }
 
+RAM_FUNC void vram_del_char_at(uint8_t col, uint8_t row){
+    uint8_t pair = col >> 1;
+    int rowBase = row * TEXT_HEIGHT * 20;
+    for (uint8_t line = 0; line < TEXT_HEIGHT; line++) {
+        int vline = line * 20;
+        if(col & 1){
+            if(col == 1){
+                videoRAM[rowBase + vline + 19] = 0;
+            }
+            videoRAM[rowBase + vline + pair] &= 0xF0;
+        }else{
+            videoRAM[rowBase + vline + pair] &= 0x0F;
+        }
+        if(pair == 0 || pair == 2){
+            videoRAM[rowBase + vline + 18] = (videoRAM[rowBase + vline] & 0x07) | (videoRAM[rowBase + vline + 2] & 0xF8);
+        }
+    }
+}
+
 RAM_FUNC void next_row(){
     cursor_col = 0;
     cursor_row++;
@@ -657,7 +574,18 @@ RAM_FUNC void next_row(){
 RAM_FUNC void put_char(char c){
     if(c == '\n' || c == '\r' ){
         next_row();
-    }else{
+    }else if( c == 127 ){
+        cursor_col--;
+        if(cursor_col == 0xff){
+          if(cursor_row > 0){
+            cursor_row--;
+            cursor_col = ROW_LENGTH - 1;
+          }else{
+            cursor_col = 0;
+          }
+        }
+        vram_del_char_at(cursor_col, cursor_row);
+    }else if(c >= ' ' && c <= '~'){
         vram_write_char_at(cursor_col, cursor_row, c);
         cursor_col++;
         if(cursor_col >= ROW_LENGTH){
@@ -674,14 +602,13 @@ RAM_FUNC char get_char(){
 
 const uint8_t w_message[] = "TinyELF Basic v0.1 " STR(BASIC_RAM_SIZE) " Bytes Free\nREADY\n";
 
-// const uint8_t w_command[] = "10 PRINT \"Hello\"\r20 END\rLIST\rRUN\r";
-
 
 RAM_FUNC int elf_main(uint32_t* args) {
     // Always reset PC first, cause it's going to be close to the end of the 6507 address space
     vcsJmp3();
 
     uint8_t evenFrame = 0;
+    uint32_t tokenCounter;
     bool key_restrainer = false;
 	
     // Init TIA and RIOT RAM
@@ -690,10 +617,8 @@ RAM_FUNC int elf_main(uint32_t* args) {
       vcsSta3(i);
     }
 
-    //vcsCopyCustomOverblankToRiotRam();
     vcsCopyOverblankToRiotRam();
 
-    //vcsStartCustomOverblank();
     vcsStartOverblank();
     for (uint8_t i = 0; i < sizeof(w_message) - 1; i++) {
         put_char(w_message[i]);
@@ -714,7 +639,6 @@ RAM_FUNC int elf_main(uint32_t* args) {
         // uint8_t SWCHB_val = vcsRead4(SWCHB);
        
         vcsNop2();
-        //vcsStartCustomOverblank();
         vcsStartOverblank();
         evenFrame = evenFrame ? 0:1;
 
@@ -725,9 +649,11 @@ RAM_FUNC int elf_main(uint32_t* args) {
           key_restrainer = false;
         }
 
-        Interp();
-
         // Do ARM and TinyBasic Stuff now
+        tokenCounter = 10;
+        while(tokenCounter-- ){
+          Interp();
+        }
   	}
 }
 
@@ -1540,17 +1466,20 @@ void Interp(void) {
           if (InLend>InLine) InLend--;      /* assume console already */
           else {     /* backing up over front of line: just kill it.. */
             Ouch('\r');
+            ILPC++;
             break;
           }
         } else if (ch==(char)Core[CanCode]) {     /* cancel this line */
           InLend = InLine;
           Ouch('\r');                  /* also start a new input line */
+          ILPC++;
           break;
-        } else if (ch<' ' || ch>'~') {/* ignore non-ASCII & controls */
+        } else if (ch<' ' || ch>'~') { /* ignore non-ASCII & controls */
             break;
         }
-        if (InLend>ExpnTop-2) break;         /* discard overrun chars */
-        Core[InLend++] = (aByte)ch;     /* insert this char in buffer */
+        if (InLend<ExpnTop-1) {              /* discard overrun chars */
+          Core[InLend++] = (aByte)ch;   /* insert this char in buffer */
+        }
         break;
 
 /* IL      2A      Insert BASIC Line.                                 */
@@ -2145,7 +2074,7 @@ void StartTinyBasic(char* ILtext) {
   int nx;
   for (nx=0; nx<CoreTop; nx++) Core[nx] = 0;          /* clear Core.. */
   Poke2(ExpnStk,8191);                          /* random number seed */
-  Core[BScode] = 8; /* backspace */
+  Core[BScode] = 127; // KeyPortari uses Delete for backspace -> 8; /* backspace */
   Core[CanCode] = 27; /*escape */
   for (nx=0; nx<32; nx++) DeCaps[nx] = '\0';     /* fill caps table.. */
   for (nx=32; nx<127; nx++) DeCaps[nx] = (char)nx;
