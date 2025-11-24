@@ -600,7 +600,7 @@ RAM_FUNC char get_char(){
     return r;
 }
 
-const uint8_t w_message[] = "TinyELF Basic v0.1 " STR(BASIC_RAM_SIZE) " Bytes Free\nREADY\n";
+const uint8_t w_message[] = "TinyELF Basic v0.2 " STR(BASIC_RAM_SIZE) " Bytes Free\nREADY\n";
 
 
 RAM_FUNC int elf_main(uint32_t* args) {
