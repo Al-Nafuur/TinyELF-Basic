@@ -1,23 +1,36 @@
 #include <stdbool.h>
-//#include <stdlib.h>
-//#include <stdio.h>
 #include <string.h>
-//#include <stdint.h>
-//#include <stddef.h>
-//#include <math.h>
 
-//#include <stdio.h>
-//#include <stdlib.h>  /* added 08 Oct 31 */
+/* the runtime environment */
+#include "hardware.h"
+#include "runtime.h"
+
+/*
+ *  the core basic language headers
+ */
+#include "language.h"
+#include "basic.h"
+
+/* use long jump for error handling */
+#if USELONGJUMP == 1
+#include "setjmp.h"
+#endif
+
+
 
 #include "vcsLib.h"
-
-#define STR_HELPER(x) #x
-#define STR(x) STR_HELPER(x)
 
 #define TEXT_HEIGHT        12     // 12 lines tall
 #define ROW_LENGTH         36     // 36 characters per row
 #define NUM_OF_ROWS        14     // 14 rows
-#define BASIC_RAM_SIZE     32768
+
+#define CHAR_MASK           0
+#define CURSOR_COL          1
+#define CURSOR_ROW          2
+#define EVEN_FRAME          3
+
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
 
 //74 cycle HMxx
 #define LEFT74_15            0x70
@@ -74,7 +87,6 @@
 #define BALL_2_CLKS          0x10
 #define BALL_1_CLK           0x00
 
-
 #define NTSC 1
 #define PAL 0
 #define PAL60 0
@@ -95,124 +107,126 @@
 #define COL_0E      0x0e
 
 // NTSC Colors
-//#define COL_80      0x80
-//#define COL_94      0x94
+#define COL_94      0x94
+#define COL_80      0x80
 
 // PAL Colors
-#define COL_94   0xb4
-#define COL_80   0xd0
+//#define COL_94   0xb4
+//#define COL_80   0xd0
 
 // use vcsLib ColorLookup array later!
-
 #define COL_BORDER          COL_00 
 #define COL_BACKGROUND      COL_94
 #define TEXT_COLOR_0        COL_0E
 #define TEXT_COLOR_1        COL_0E
 
-void StartTinyBasic(char*);
-void Interp(void);
+void setup(void);
+void loop(void);
+
+void vcs_memwrite2(number_t, number_t);
+mem_t vcs_memread2(number_t);
 
 //---------------------------------
 //   Font Graphics
 //---------------------------------
 uint8_t gfxArray[108][TEXT_HEIGHT] = {
                                                                   // Regular Character Graphics
-  { 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },    //  32 space
-  { 0x02,0x02,0x02,0x02,0x02,0x02,0x00,0x00,0x02,0x02,0x00,0x00 },    //  33 !
-  { 0x05,0x05,0x05,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },    //  34 "
-  { 0x01,0x01,0x05,0x07,0x07,0x05,0x05,0x07,0x07,0x05,0x04,0x04 },    //  35 #
-  { 0x02,0x02,0x07,0x05,0x04,0x06,0x03,0x01,0x05,0x07,0x02,0x02 },    //  36 $
-  { 0x00,0x05,0x05,0x01,0x02,0x02,0x02,0x04,0x05,0x05,0x00,0x00 },    //  37 %
-  { 0x02,0x07,0x05,0x03,0x02,0x06,0x05,0x05,0x05,0x07,0x03,0x01 },    //  38 &
-  { 0x02,0x02,0x02,0x02,0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },    //  39 '
-  { 0x01,0x03,0x02,0x06,0x04,0x04,0x04,0x04,0x06,0x02,0x03,0x01 },    //  40 (
-  { 0x04,0x06,0x02,0x03,0x01,0x01,0x01,0x01,0x03,0x02,0x06,0x04 },    //  41 )
-  { 0x00,0x00,0x05,0x05,0x02,0x07,0x07,0x02,0x05,0x05,0x00,0x00 },    //  42 *
-  { 0x00,0x00,0x02,0x02,0x02,0x07,0x07,0x02,0x02,0x02,0x00,0x00 },    //  43 +
-  { 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x02,0x02,0x02,0x04,0x04 },    //  44 ,
-  { 0x00,0x00,0x00,0x00,0x00,0x07,0x07,0x00,0x00,0x00,0x00,0x00 },    //  45 -
-  { 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x02,0x02,0x02,0x00,0x00 },    //  46 .
-  { 0x01,0x01,0x01,0x01,0x02,0x02,0x02,0x02,0x04,0x04,0x04,0x04 },    //  47 /
-  { 0x02,0x07,0x05,0x05,0x05,0x05,0x05,0x05,0x07,0x02,0x00,0x00 },    //  48 0
-  { 0x02,0x06,0x06,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x00,0x00 },    //  49 1
-  { 0x06,0x07,0x01,0x01,0x01,0x03,0x06,0x04,0x07,0x07,0x00,0x00 },    //  50 2
-  { 0x07,0x07,0x01,0x01,0x02,0x03,0x01,0x01,0x07,0x06,0x00,0x00 },    //  51 3
-  { 0x01,0x05,0x05,0x05,0x05,0x07,0x07,0x01,0x01,0x01,0x00,0x00 },    //  52 4
-  { 0x07,0x07,0x04,0x06,0x07,0x01,0x01,0x01,0x07,0x06,0x00,0x00 },    //  53 5
-  { 0x03,0x07,0x04,0x06,0x07,0x05,0x05,0x05,0x07,0x02,0x00,0x00 },    //  54 6
-  { 0x07,0x07,0x01,0x01,0x01,0x03,0x02,0x02,0x02,0x02,0x00,0x00 },    //  55 7
-  { 0x03,0x07,0x05,0x05,0x06,0x03,0x05,0x05,0x07,0x02,0x00,0x00 },    //  56 8
-  { 0x02,0x07,0x05,0x05,0x05,0x07,0x03,0x01,0x07,0x06,0x00,0x00 },    //  57 9
-  { 0x00,0x00,0x00,0x02,0x02,0x02,0x00,0x02,0x02,0x02,0x00,0x00 },    //  58 :
-  { 0x00,0x00,0x00,0x02,0x02,0x02,0x00,0x02,0x02,0x02,0x04,0x04 },    //  59 ;
-  { 0x00,0x01,0x01,0x02,0x02,0x04,0x04,0x02,0x02,0x01,0x01,0x00 },    //  60 <
-  { 0x00,0x00,0x00,0x07,0x07,0x00,0x00,0x07,0x07,0x00,0x00,0x00 },    //  61 =
-  { 0x00,0x04,0x04,0x02,0x02,0x01,0x01,0x02,0x02,0x04,0x04,0x00 },    //  62 >
-  { 0x06,0x07,0x01,0x01,0x03,0x02,0x02,0x00,0x02,0x02,0x00,0x00 },    //  63 ?
-  { 0x02,0x07,0x05,0x05,0x01,0x03,0x07,0x05,0x07,0x03,0x00,0x00 },    //  64 @
-  { 0x02,0x07,0x05,0x05,0x05,0x07,0x07,0x05,0x05,0x05,0x00,0x00 },    //  65 A
-  { 0x06,0x07,0x05,0x05,0x06,0x07,0x05,0x05,0x07,0x06,0x00,0x00 },    //  66 B
-  { 0x03,0x07,0x04,0x04,0x04,0x04,0x04,0x04,0x07,0x03,0x00,0x00 },    //  67 C
-  { 0x06,0x07,0x05,0x05,0x05,0x05,0x05,0x05,0x07,0x06,0x00,0x00 },    //  68 D
-  { 0x07,0x07,0x04,0x06,0x06,0x06,0x04,0x04,0x07,0x07,0x00,0x00 },    //  69 E
-  { 0x07,0x07,0x04,0x04,0x06,0x06,0x04,0x04,0x04,0x04,0x00,0x00 },    //  70 F
-  { 0x03,0x07,0x04,0x04,0x04,0x05,0x05,0x05,0x07,0x03,0x00,0x00 },    //  71 G
-  { 0x05,0x05,0x05,0x05,0x07,0x07,0x05,0x05,0x05,0x05,0x00,0x00 },    //  72 H
-  { 0x07,0x07,0x02,0x02,0x02,0x02,0x02,0x02,0x07,0x07,0x00,0x00 },    //  73 I
-  { 0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x07,0x06,0x00,0x00 },    //  74 J
-  { 0x05,0x05,0x05,0x07,0x06,0x06,0x05,0x05,0x05,0x05,0x00,0x00 },    //  75 K
-  { 0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x07,0x07,0x00,0x00 },    //  76 L
-  { 0x05,0x05,0x07,0x07,0x07,0x05,0x05,0x05,0x05,0x05,0x00,0x00 },    //  77 M
-  { 0x01,0x01,0x05,0x05,0x07,0x07,0x07,0x05,0x05,0x04,0x04,0x00 },    //  78 N
-  { 0x02,0x07,0x05,0x05,0x05,0x05,0x05,0x05,0x07,0x02,0x00,0x00 },    //  79 O
-  { 0x06,0x07,0x05,0x05,0x05,0x07,0x06,0x04,0x04,0x04,0x00,0x00 },    //  80 P
-  { 0x02,0x07,0x05,0x05,0x05,0x05,0x05,0x05,0x06,0x03,0x01,0x00 },    //  81 Q
-  { 0x06,0x07,0x05,0x05,0x05,0x06,0x07,0x05,0x05,0x05,0x00,0x00 },    //  82 R
-  { 0x03,0x07,0x04,0x04,0x06,0x03,0x01,0x01,0x07,0x06,0x00,0x00 },    //  83 S
-  { 0x07,0x07,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x00,0x00 },    //  84 T
-  { 0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x07,0x02,0x00,0x00 },    //  85 U
-  { 0x05,0x05,0x05,0x05,0x05,0x05,0x07,0x07,0x02,0x02,0x00,0x00 },    //  86 V
-  { 0x05,0x05,0x05,0x05,0x05,0x07,0x07,0x07,0x05,0x05,0x00,0x00 },    //  87 W
-  { 0x05,0x05,0x05,0x07,0x02,0x02,0x07,0x05,0x05,0x05,0x00,0x00 },    //  88 X
-  { 0x05,0x05,0x05,0x05,0x07,0x07,0x02,0x02,0x02,0x02,0x00,0x00 },    //  89 Y
-  { 0x07,0x07,0x01,0x01,0x03,0x02,0x06,0x04,0x07,0x07,0x00,0x00 },    //  90 Z
-  { 0x03,0x03,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x03,0x03 },    //  91 [
-  { 0x04,0x04,0x04,0x04,0x02,0x02,0x02,0x02,0x01,0x01,0x01,0x01 },    //  92    backslash
-  { 0x06,0x06,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x06,0x06 },    //  93 ]
-  { 0x02,0x02,0x07,0x05,0x05,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },    //  94 ^  caret
-  { 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x07,0x07 },    //  95 _  underscore
-  { 0x04,0x04,0x06,0x02,0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },    //  96 `  grave
-  { 0x00,0x00,0x02,0x03,0x01,0x03,0x07,0x05,0x07,0x03,0x00,0x00 },    //  97 a
-  { 0x04,0x04,0x06,0x07,0x05,0x05,0x05,0x05,0x07,0x06,0x00,0x00 },    //  98 b
-  { 0x00,0x00,0x03,0x07,0x04,0x04,0x04,0x04,0x07,0x03,0x00,0x00 },    //  99 c
-  { 0x01,0x01,0x03,0x07,0x05,0x05,0x05,0x05,0x07,0x03,0x00,0x00 },    // 100 d
-  { 0x00,0x00,0x02,0x07,0x05,0x07,0x06,0x04,0x07,0x03,0x00,0x00 },    // 101 e
-  { 0x01,0x03,0x02,0x02,0x07,0x07,0x02,0x02,0x02,0x02,0x00,0x00 },    // 102 f
-  { 0x00,0x00,0x03,0x07,0x05,0x05,0x05,0x07,0x03,0x01,0x07,0x06 },    // 103 g
-  { 0x04,0x04,0x06,0x07,0x05,0x05,0x05,0x05,0x05,0x05,0x00,0x00 },    // 104 h
-  { 0x02,0x02,0x00,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x00,0x00 },    // 105 i
-  { 0x02,0x02,0x00,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x06,0x04 },    // 106 j
-  { 0x04,0x04,0x05,0x05,0x07,0x06,0x07,0x05,0x05,0x05,0x00,0x00 },    // 107 k
-  { 0x06,0x06,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x00,0x00 },    // 108 l
-  { 0x00,0x00,0x05,0x07,0x07,0x07,0x05,0x05,0x05,0x05,0x00,0x00 },    // 109 m
-  { 0x00,0x00,0x06,0x07,0x05,0x05,0x05,0x05,0x05,0x05,0x00,0x00 },    // 110 n
-  { 0x00,0x00,0x02,0x07,0x05,0x05,0x05,0x05,0x07,0x02,0x00,0x00 },    // 111 o
-  { 0x00,0x00,0x06,0x07,0x05,0x05,0x05,0x05,0x07,0x06,0x04,0x04 },    // 112 p
-  { 0x00,0x00,0x03,0x07,0x05,0x05,0x05,0x05,0x07,0x03,0x01,0x01 },    // 113 q
-  { 0x00,0x00,0x05,0x07,0x06,0x04,0x04,0x04,0x04,0x04,0x00,0x00 },    // 114 r
-  { 0x00,0x00,0x03,0x07,0x04,0x06,0x03,0x01,0x07,0x06,0x00,0x00 },    // 115 s
-  { 0x02,0x02,0x07,0x07,0x02,0x02,0x02,0x02,0x03,0x01,0x00,0x00 },    // 116 t
-  { 0x00,0x00,0x05,0x05,0x05,0x05,0x05,0x05,0x07,0x03,0x00,0x00 },    // 117 u
-  { 0x00,0x00,0x05,0x05,0x05,0x05,0x05,0x07,0x02,0x02,0x00,0x00 },    // 118 v
-  { 0x00,0x00,0x05,0x05,0x05,0x05,0x07,0x07,0x07,0x05,0x00,0x00 },    // 119 w
-  { 0x00,0x00,0x05,0x05,0x07,0x02,0x02,0x07,0x05,0x05,0x00,0x00 },    // 120 x
-  { 0x00,0x00,0x05,0x05,0x05,0x05,0x05,0x07,0x03,0x01,0x07,0x06 },    // 121 y
-  { 0x00,0x00,0x07,0x07,0x01,0x02,0x02,0x04,0x07,0x07,0x00,0x00 },    // 122 z
-  { 0x01,0x03,0x02,0x02,0x02,0x04,0x04,0x02,0x02,0x02,0x03,0x01 },    // 123 {
-  { 0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02 },    // 124 |
-  { 0x04,0x06,0x02,0x02,0x02,0x01,0x01,0x02,0x02,0x02,0x06,0x04 },    // 125 }
-  { 0x00,0x00,0x00,0x00,0x01,0x07,0x07,0x04,0x00,0x00,0x00,0x00 },    // 126 ~
-  { 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 }     // 127 Delete
+  { 0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0 },    //  32 space
+  { 0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xF0,0xF0,0xD2,0xD2,0xF0,0xF0 },    //  33 !
+  { 0xA5,0xA5,0xA5,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0 },    //  34 "
+  { 0xE1,0xE1,0xA5,0x87,0x87,0xA5,0xA5,0x87,0x87,0xA5,0xB4,0xB4 },    //  35 #
+  { 0xD2,0xD2,0x87,0xA5,0xB4,0x96,0xC3,0xE1,0xA5,0x87,0xD2,0xD2 },    //  36 $
+  { 0xF0,0xA5,0xA5,0xE1,0xD2,0xD2,0xD2,0xB4,0xA5,0xA5,0xF0,0xF0 },    //  37 %
+  { 0xD2,0x87,0xA5,0xC3,0xD2,0x96,0xA5,0xA5,0xA5,0x87,0xC3,0xE1 },    //  38 &
+  { 0xD2,0xD2,0xD2,0xD2,0xD2,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0 },    //  39 '
+  { 0xE1,0xC3,0xD2,0x96,0xB4,0xB4,0xB4,0xB4,0x96,0xD2,0xC3,0xE1 },    //  40 (
+  { 0xB4,0x96,0xD2,0xC3,0xE1,0xE1,0xE1,0xE1,0xC3,0xD2,0x96,0xB4 },    //  41 )
+  { 0xF0,0xF0,0xA5,0xA5,0xD2,0x87,0x87,0xD2,0xA5,0xA5,0xF0,0xF0 },    //  42 *
+  { 0xF0,0xF0,0xD2,0xD2,0xD2,0x87,0x87,0xD2,0xD2,0xD2,0xF0,0xF0 },    //  43 +
+  { 0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xD2,0xD2,0xD2,0xB4,0xB4 },    //  44 ,
+  { 0xF0,0xF0,0xF0,0xF0,0xF0,0x87,0x87,0xF0,0xF0,0xF0,0xF0,0xF0 },    //  45 -
+  { 0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xD2,0xD2,0xD2,0xF0,0xF0 },    //  46 .
+  { 0xE1,0xE1,0xE1,0xE1,0xD2,0xD2,0xD2,0xD2,0xB4,0xB4,0xB4,0xB4 },    //  47 /
+  { 0xD2,0x87,0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0x87,0xD2,0xF0,0xF0 },    //  48 0
+  { 0xD2,0x96,0x96,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xF0,0xF0 },    //  49 1
+  { 0x96,0x87,0xE1,0xE1,0xE1,0xC3,0x96,0xB4,0x87,0x87,0xF0,0xF0 },    //  50 2
+  { 0x87,0x87,0xE1,0xE1,0xD2,0xC3,0xE1,0xE1,0x87,0x96,0xF0,0xF0 },    //  51 3
+  { 0xE1,0xA5,0xA5,0xA5,0xA5,0x87,0x87,0xE1,0xE1,0xE1,0xF0,0xF0 },    //  52 4
+  { 0x87,0x87,0xB4,0x96,0x87,0xE1,0xE1,0xE1,0x87,0x96,0xF0,0xF0 },    //  53 5
+  { 0xC3,0x87,0xB4,0x96,0x87,0xA5,0xA5,0xA5,0x87,0xD2,0xF0,0xF0 },    //  54 6
+  { 0x87,0x87,0xE1,0xE1,0xE1,0xC3,0xD2,0xD2,0xD2,0xD2,0xF0,0xF0 },    //  55 7
+  { 0xC3,0x87,0xA5,0xA5,0x96,0xC3,0xA5,0xA5,0x87,0xD2,0xF0,0xF0 },    //  56 8
+  { 0xD2,0x87,0xA5,0xA5,0xA5,0x87,0xC3,0xE1,0x87,0x96,0xF0,0xF0 },    //  57 9
+  { 0xF0,0xF0,0xF0,0xD2,0xD2,0xD2,0xF0,0xD2,0xD2,0xD2,0xF0,0xF0 },    //  58 :
+  { 0xF0,0xF0,0xF0,0xD2,0xD2,0xD2,0xF0,0xD2,0xD2,0xD2,0xB4,0xB4 },    //  59 ;
+  { 0xF0,0xE1,0xE1,0xD2,0xD2,0xB4,0xB4,0xD2,0xD2,0xE1,0xE1,0xF0 },    //  60 <
+  { 0xF0,0xF0,0xF0,0x87,0x87,0xF0,0xF0,0x87,0x87,0xF0,0xF0,0xF0 },    //  61 =
+  { 0xF0,0xB4,0xB4,0xD2,0xD2,0xE1,0xE1,0xD2,0xD2,0xB4,0xB4,0xF0 },    //  62 >
+  { 0x96,0x87,0xE1,0xE1,0xC3,0xD2,0xD2,0xF0,0xD2,0xD2,0xF0,0xF0 },    //  63 ?
+  { 0xD2,0x87,0xA5,0xA5,0xE1,0xC3,0x87,0xA5,0x87,0xC3,0xF0,0xF0 },    //  64 @
+  { 0xD2,0x87,0xA5,0xA5,0xA5,0x87,0x87,0xA5,0xA5,0xA5,0xF0,0xF0 },    //  65 A
+  { 0x96,0x87,0xA5,0xA5,0x96,0x87,0xA5,0xA5,0x87,0x96,0xF0,0xF0 },    //  66 B
+  { 0xC3,0x87,0xB4,0xB4,0xB4,0xB4,0xB4,0xB4,0x87,0xC3,0xF0,0xF0 },    //  67 C
+  { 0x96,0x87,0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0x87,0x96,0xF0,0xF0 },    //  68 D
+  { 0x87,0x87,0xB4,0x96,0x96,0x96,0xB4,0xB4,0x87,0x87,0xF0,0xF0 },    //  69 E
+  { 0x87,0x87,0xB4,0xB4,0x96,0x96,0xB4,0xB4,0xB4,0xB4,0xF0,0xF0 },    //  70 F
+  { 0xC3,0x87,0xB4,0xB4,0xB4,0xA5,0xA5,0xA5,0x87,0xC3,0xF0,0xF0 },    //  71 G
+  { 0xA5,0xA5,0xA5,0xA5,0x87,0x87,0xA5,0xA5,0xA5,0xA5,0xF0,0xF0 },    //  72 H
+  { 0x87,0x87,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0x87,0x87,0xF0,0xF0 },    //  73 I
+  { 0xE1,0xE1,0xE1,0xE1,0xE1,0xE1,0xE1,0xE1,0x87,0x96,0xF0,0xF0 },    //  74 J
+  { 0xA5,0xA5,0xA5,0x87,0x96,0x96,0xA5,0xA5,0xA5,0xA5,0xF0,0xF0 },    //  75 K
+  { 0xB4,0xB4,0xB4,0xB4,0xB4,0xB4,0xB4,0xB4,0x87,0x87,0xF0,0xF0 },    //  76 L
+  { 0xA5,0xA5,0x87,0x87,0x87,0xA5,0xA5,0xA5,0xA5,0xA5,0xF0,0xF0 },    //  77 M
+  { 0xE1,0xE1,0xA5,0xA5,0x87,0x87,0x87,0xA5,0xA5,0xB4,0xB4,0xF0 },    //  78 N
+  { 0xD2,0x87,0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0x87,0xD2,0xF0,0xF0 },    //  79 O
+  { 0x96,0x87,0xA5,0xA5,0xA5,0x87,0x96,0xB4,0xB4,0xB4,0xF0,0xF0 },    //  80 P
+  { 0xD2,0x87,0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0x96,0xC3,0xE1,0xF0 },    //  81 Q
+  { 0x96,0x87,0xA5,0xA5,0xA5,0x96,0x87,0xA5,0xA5,0xA5,0xF0,0xF0 },    //  82 R
+  { 0xC3,0x87,0xB4,0xB4,0x96,0xC3,0xE1,0xE1,0x87,0x96,0xF0,0xF0 },    //  83 S
+  { 0x87,0x87,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xF0,0xF0 },    //  84 T
+  { 0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0x87,0xD2,0xF0,0xF0 },    //  85 U
+  { 0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0x87,0x87,0xD2,0xD2,0xF0,0xF0 },    //  86 V
+  { 0xA5,0xA5,0xA5,0xA5,0xA5,0x87,0x87,0x87,0xA5,0xA5,0xF0,0xF0 },    //  87 W
+  { 0xA5,0xA5,0xA5,0x87,0xD2,0xD2,0x87,0xA5,0xA5,0xA5,0xF0,0xF0 },    //  88 X
+  { 0xA5,0xA5,0xA5,0xA5,0x87,0x87,0xD2,0xD2,0xD2,0xD2,0xF0,0xF0 },    //  89 Y
+  { 0x87,0x87,0xE1,0xE1,0xC3,0xD2,0x96,0xB4,0x87,0x87,0xF0,0xF0 },    //  90 Z
+  { 0xC3,0xC3,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xC3,0xC3 },    //  91 [
+  { 0xB4,0xB4,0xB4,0xB4,0xD2,0xD2,0xD2,0xD2,0xE1,0xE1,0xE1,0xE1 },    //  92    backslash
+  { 0x96,0x96,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0x96,0x96 },    //  93 ]
+  { 0xD2,0xD2,0x87,0xA5,0xA5,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0 },    //  94 ^  caret
+  { 0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0x87,0x87 },    //  95 _  underscore
+  { 0xB4,0xB4,0x96,0xD2,0xD2,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0 },    //  96 `  grave
+  { 0xF0,0xF0,0xD2,0xC3,0xE1,0xC3,0x87,0xA5,0x87,0xC3,0xF0,0xF0 },    //  97 a
+  { 0xB4,0xB4,0x96,0x87,0xA5,0xA5,0xA5,0xA5,0x87,0x96,0xF0,0xF0 },    //  98 b
+  { 0xF0,0xF0,0xC3,0x87,0xB4,0xB4,0xB4,0xB4,0x87,0xC3,0xF0,0xF0 },    //  99 c
+  { 0xE1,0xE1,0xC3,0x87,0xA5,0xA5,0xA5,0xA5,0x87,0xC3,0xF0,0xF0 },    // 100 d
+  { 0xF0,0xF0,0xD2,0x87,0xA5,0x87,0x96,0xB4,0x87,0xC3,0xF0,0xF0 },    // 101 e
+  { 0xE1,0xC3,0xD2,0xD2,0x87,0x87,0xD2,0xD2,0xD2,0xD2,0xF0,0xF0 },    // 102 f
+  { 0xF0,0xF0,0xC3,0x87,0xA5,0xA5,0xA5,0x87,0xC3,0xE1,0x87,0x96 },    // 103 g
+  { 0xB4,0xB4,0x96,0x87,0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0xF0,0xF0 },    // 104 h
+  { 0xD2,0xD2,0xF0,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xF0,0xF0 },    // 105 i
+  { 0xD2,0xD2,0xF0,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0x96,0xB4 },    // 106 j
+  { 0xB4,0xB4,0xA5,0xA5,0x87,0x96,0x87,0xA5,0xA5,0xA5,0xF0,0xF0 },    // 107 k
+  { 0x96,0x96,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xF0,0xF0 },    // 108 l
+  { 0xF0,0xF0,0xA5,0x87,0x87,0x87,0xA5,0xA5,0xA5,0xA5,0xF0,0xF0 },    // 109 m
+  { 0xF0,0xF0,0x96,0x87,0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0xF0,0xF0 },    // 110 n
+  { 0xF0,0xF0,0xD2,0x87,0xA5,0xA5,0xA5,0xA5,0x87,0xD2,0xF0,0xF0 },    // 111 o
+  { 0xF0,0xF0,0x96,0x87,0xA5,0xA5,0xA5,0xA5,0x87,0x96,0xB4,0xB4 },    // 112 p
+  { 0xF0,0xF0,0xC3,0x87,0xA5,0xA5,0xA5,0xA5,0x87,0xC3,0xE1,0xE1 },    // 113 q
+  { 0xF0,0xF0,0xA5,0x87,0x96,0xB4,0xB4,0xB4,0xB4,0xB4,0xF0,0xF0 },    // 114 r
+  { 0xF0,0xF0,0xC3,0x87,0xB4,0x96,0xC3,0xE1,0x87,0x96,0xF0,0xF0 },    // 115 s
+  { 0xD2,0xD2,0x87,0x87,0xD2,0xD2,0xD2,0xD2,0xC3,0xE1,0xF0,0xF0 },    // 116 t
+  { 0xF0,0xF0,0xA5,0xA5,0xA5,0xA5,0xA5,0xA5,0x87,0xC3,0xF0,0xF0 },    // 117 u
+  { 0xF0,0xF0,0xA5,0xA5,0xA5,0xA5,0xA5,0x87,0xD2,0xD2,0xF0,0xF0 },    // 118 v
+  { 0xF0,0xF0,0xA5,0xA5,0xA5,0xA5,0x87,0x87,0x87,0xA5,0xF0,0xF0 },    // 119 w
+  { 0xF0,0xF0,0xA5,0xA5,0x87,0xD2,0xD2,0x87,0xA5,0xA5,0xF0,0xF0 },    // 120 x
+  { 0xF0,0xF0,0xA5,0xA5,0xA5,0xA5,0xA5,0x87,0xC3,0xE1,0x87,0x96 },    // 121 y
+  { 0xF0,0xF0,0x87,0x87,0xE1,0xD2,0xD2,0xB4,0x87,0x87,0xF0,0xF0 },    // 122 z
+  { 0xE1,0xC3,0xD2,0xD2,0xD2,0xB4,0xB4,0xD2,0xD2,0xD2,0xC3,0xE1 },    // 123 {
+  { 0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2,0xD2 },    // 124 |
+  { 0xB4,0x96,0xD2,0xD2,0xD2,0xE1,0xE1,0xD2,0xD2,0xD2,0x96,0xB4 },    // 125 }
+  { 0xF0,0xF0,0xF0,0xF0,0xE1,0x87,0x87,0xB4,0xF0,0xF0,0xF0,0xF0 },    // 126 ~
+  { 0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0 }     // 127 Delete
 };
 
 uint8_t videoRAM[(NUM_OF_ROWS * TEXT_HEIGHT * 20 ) + 20] __attribute__((aligned(4))) = { [0 ... ((NUM_OF_ROWS * TEXT_HEIGHT * 20 ) + 19)] = 0x00 };
@@ -221,7 +235,54 @@ uint8_t bkColorRAM[NUM_OF_ROWS * (TEXT_HEIGHT + 1 )] = { [ 0 ... ( NUM_OF_ROWS *
 
 uint8_t txtColorRAM[NUM_OF_ROWS] = {  [ 0 ... (NUM_OF_ROWS - 1) ] = TEXT_COLOR_0 };
 
-uint8_t cursor_col = 0, cursor_row = 0;
+uint8_t playfieldShadowRAM[NUM_OF_ROWS * 5] = { 
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0
+};
+
+uint8_t tiaShadowRAM[26] = { 
+  0x0f, // 00: CHAR_MASK (use upper or lower nibble char in charset)
+  0,    // 01: CURSOR_COL
+  0,    // 02: CURSOR_ROW
+  0,    // 03: EVEN_FRAME
+  0,    // 04: unused
+  0,    // 05: unused
+  0,    // 06: unused
+  0,    // 07: unused
+  0,    // 08: INPT0 (read only)
+  0,    // 09: INPT1 (read only)
+  0,    // 0A: INPT2 (read only)
+  0,    // 0B: INPT3 (read only)
+  0,    // 0C: INPT4 (read only)
+  0,    // 0D: INPT5 (read only)
+  0,    // 0E: unused
+  0,    // 0F: unused
+  0,    // 10: unused
+  0,    // 11: unused
+  0,    // 12: unused
+  0,    // 13: unused
+  0,    // 14: unused
+  0,    // 15: AUDC0  Audio Control 0   (rw)
+  0,    // 16: AUDC1  Audio Control 1   (rw)
+  0,    // 17: AUDF0  Audio Frequency 0 (rw)
+  0,    // 18: AUDF1  Audio Frequency 1 (rw)
+  0,    // 19: AUDV0  Audio Volume 0    (rw)
+  0     // 1A: AUDV1  Audio Volume 1    (rw)
+};
+
+uint8_t riotShadowRAM[10] = { 0,0,0,0,0,0,0,0,0,0 };
 
 char active_char = '\0';
 
@@ -347,12 +408,12 @@ RAM_FUNC void KERNEL_2_line(const uint8_t *linePointer, uint8_t use_enam, uint8_
 #endif
 }
 
-RAM_FUNC void renderDisplayFrame(uint8_t evenFrame) {
+RAM_FUNC void renderDisplayFrame() {
     const uint8_t *linePtr = videoRAM;
     bool kernel_a = false;
 
     positioningTiaElement(1, P1_POSITION);
-    uint8_t missle_offset = evenFrame ? M0_POS : (M0_POS + 4);
+    uint8_t missle_offset = tiaShadowRAM[EVEN_FRAME] ? M0_POS : (M0_POS + 4);
     positioningTiaElement(2, missle_offset);
     positioningTiaElement(3, missle_offset);
     vcsSta3(WSYNC);
@@ -397,11 +458,22 @@ RAM_FUNC void renderDisplayFrame(uint8_t evenFrame) {
     vcsLda2(bkColorRAM[0]);
     vcsSta3(COLUBK);
 
+    vcsLda2(playfieldShadowRAM[0]);
+    vcsSta3(COLUPF);
+    vcsLda2(playfieldShadowRAM[1]);
+    vcsSta3(CTRLPF);
+    vcsLda2(playfieldShadowRAM[2]);
+    vcsSta3(PF0);
+    vcsLda2(playfieldShadowRAM[3]);
+    vcsSta3(PF1);
+    vcsLda2(playfieldShadowRAM[4]);
+    vcsSta3(PF2);
+
     // DELAY_X_CYCLES 48
-    vcsSleep(62 + evenFrame); // we skip 14 (odd frame) 15(even frame) 
+    vcsSleep(37 + tiaShadowRAM[EVEN_FRAME]); // we skip 14 (odd frame) 15(even frame) 
                               // cycles of bankswitching code here
 
-    if (evenFrame){
+    if (tiaShadowRAM[EVEN_FRAME]){
         kernel_a = true;
         vcsSleep(6);
     } else {
@@ -434,11 +506,12 @@ RAM_FUNC void renderDisplayFrame(uint8_t evenFrame) {
             vcsLda2( bkColorRAM[(row * (TEXT_HEIGHT + 1 )) + 12] );
             vcsSta3(COLUBK);
             if(row < (NUM_OF_ROWS - 1 )){
+                uint8_t n_row = row + 1;
                 // KERN_A_TO_B 
                 // COLOR_ROW
                 //ldx    rowIndex              ;3
                 //lda    colRow_0,X            ;4
-                vcsLda2(txtColorRAM[row + 1]);
+                vcsLda2(txtColorRAM[n_row]);
                 vcsSta3(COLUP0);
                 //lda    colRow_1,X            ;4
                 vcsSta3(COLUP1);
@@ -455,11 +528,25 @@ RAM_FUNC void renderDisplayFrame(uint8_t evenFrame) {
 #endif
                 vcsSta3(WSYNC);
 
-                vcsLda2( bkColorRAM[(row + 1) * (TEXT_HEIGHT + 1 )] );
+                vcsLda2( bkColorRAM[(n_row) * (TEXT_HEIGHT + 1 )] );
                 vcsSta3(COLUBK);
                 // DELAY_X_CYCLES {3}
 //              	vcsJmp3();
-                vcsSleep(57);
+
+                n_row *= 5;
+
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(COLUPF);
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(CTRLPF);
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(PF0);
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(PF1);
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(PF2);
+
+                vcsSleep(32);
 
                 vcsLda2(LEFT74_8);
                 vcsSta3(HMP1);
@@ -491,9 +578,10 @@ RAM_FUNC void renderDisplayFrame(uint8_t evenFrame) {
 
             if(row < (NUM_OF_ROWS - 1) ){
                 // KERNEL_B_TO_A 
+                uint8_t n_row = row + 1;
 
                 // COLOR_ROW
-                vcsLda2(txtColorRAM[row + 1]);
+                vcsLda2(txtColorRAM[n_row]);
                 vcsSta3(COLUP0);
                 vcsSta3(COLUP1);
                 vcsLdx2(ENAM1);
@@ -505,10 +593,24 @@ RAM_FUNC void renderDisplayFrame(uint8_t evenFrame) {
 #endif
                 vcsSta3(WSYNC);
 
-                vcsLda2( bkColorRAM[(row + 1) * (TEXT_HEIGHT + 1 )] );
+                vcsLda2( bkColorRAM[(n_row) * (TEXT_HEIGHT + 1 )] );
                 vcsSta3(COLUBK);
                 // DELAY_X_CYCLES {2}
-                vcsSleep(64);
+                n_row *= 5;
+
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(COLUPF);
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(CTRLPF);
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(PF0);
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(PF1);
+                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsSta3(PF2);
+
+
+                vcsSleep(39);
 
                 vcsLdx2(RIGHT_8);
                 vcsStx3(HMP1);
@@ -520,26 +622,49 @@ RAM_FUNC void renderDisplayFrame(uint8_t evenFrame) {
 }
 
 // write ASCII char at text cell position (col, row)
-RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c){
+RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c) {
+    static const uint8_t uls[18] = {3,4,5,4,5,4,5,5,5,5,5,5,5,4,5,4,5,4};
+    static const uint8_t lls[18] = {1,0,1,0,1,0,1,1,1,1,1,1,1,0,1,0,1,0};
+
+    /* mask_uls bleibt sinnvoll (verschiedene Werte) */
+    static const uint8_t mask_uls[18] = {
+        0x07, 0x0F, 0x1F, 0x0F, 0x1F, 0x0F, 0x1F, 0x1F,
+        0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x0F, 0x1F, 0x0F,
+        0x1F, 0x0F
+    };
     uint8_t pair = col >> 1;
     int rowBase = row * TEXT_HEIGHT * 20;
-    for (uint8_t line = 0; line < TEXT_HEIGHT; line++) {
-        uint8_t uls[ROW_LENGTH / 2] = {3,4,5,4,5,4,5,5,5,5,5,5,5,4,5,4,5,4};
-        uint8_t lls[ROW_LENGTH / 2] = {1,0,1,0,1,0,1,1,1,1,1,1,1,0,1,0,1,0};
-        int vline = line * 20;
-        if(col & 1){
-            if(col == 1){
-                videoRAM[rowBase + vline + 19] = (gfxArray[c-32][line]<<1) & 0x02;
-                videoRAM[rowBase + vline] |= gfxArray[c-32][line]>>lls[pair];
-            }else{
-                videoRAM[rowBase + vline + pair ] |= gfxArray[c-32][line]<<lls[pair];
+
+    // Hoisting: diese Werte ändern sich in der Schleife nicht
+    const uint8_t u = uls[pair];
+    const uint8_t l = lls[pair];
+    const uint8_t masku = mask_uls[pair];       // für uls-LEFT-fill
+    const uint8_t high_fill = (l ? 0x80u : 0x00u); // für lls-used-as-right-fill
+    const uint8_t low_fill = (uint8_t)l;        // für lls-used-as-left-fill (0 oder 1)
+    const uint8_t my_mask  = tiaShadowRAM[CHAR_MASK];
+    bool cond = ( my_mask == 0xf0);
+    const uint8_t my_flag  = cond ? 0xff : 0x00;
+    const uint8_t my_shift = cond ? 4    : 0;
+
+
+    int vline = rowBase; // starts at rowBase, we increment um 20 pro iteration
+    for (uint8_t line = 0; line < TEXT_HEIGHT; ++line) {
+        uint8_t chr = (gfxArray[c - 32][line] & my_mask ) >> my_shift;
+        if (col & 1) {
+            if (col == 1) {
+                videoRAM[vline + 19] = (uint8_t)((chr << 1) & 0x02u);
+                videoRAM[vline] |= (uint8_t)((chr >> l) | (high_fill & my_flag));
+
+            } else {
+                videoRAM[vline + pair] |= (uint8_t)((chr << l) | (low_fill & my_flag));
             }
-        }else{
-            videoRAM[rowBase + vline + pair] = gfxArray[c-32][line]<<uls[pair];
+        } else {
+            videoRAM[vline + pair] = (uint8_t)((chr << u));
         }
-        if(pair == 0 || pair == 2){
-            videoRAM[rowBase + vline + 18] = (videoRAM[rowBase + vline] & 0x07) | (videoRAM[rowBase + vline + 2] & 0xF8);
+        if (pair == 0 || pair == 2) {
+            videoRAM[vline + 18] = (uint8_t)((videoRAM[vline] & 0x07u) | (videoRAM[vline + 2] & 0xF8u));
         }
+        vline += 20;
     }
 }
 
@@ -563,10 +688,10 @@ RAM_FUNC void vram_del_char_at(uint8_t col, uint8_t row){
 }
 
 RAM_FUNC void next_row(){
-    cursor_col = 0;
-    cursor_row++;
-    if(cursor_row >= NUM_OF_ROWS){
-        cursor_row = NUM_OF_ROWS-1;
+    tiaShadowRAM[CURSOR_COL] = 0;
+    tiaShadowRAM[CURSOR_ROW]++;
+    if(tiaShadowRAM[CURSOR_ROW] >= NUM_OF_ROWS){
+        tiaShadowRAM[CURSOR_ROW] = NUM_OF_ROWS-1;
         scroll_video_ram();
     }
 }
@@ -574,23 +699,35 @@ RAM_FUNC void next_row(){
 RAM_FUNC void put_char(char c){
     if(c == '\n' || c == '\r' ){
         next_row();
-    }else if( c == 127 ){
-        cursor_col--;
-        if(cursor_col == 0xff){
-          if(cursor_row > 0){
-            cursor_row--;
-            cursor_col = ROW_LENGTH - 1;
+    }else if( c == 127 || c == 8 ){
+        tiaShadowRAM[CURSOR_COL]--;
+        if(tiaShadowRAM[CURSOR_COL] == 0xff){
+          if(tiaShadowRAM[CURSOR_ROW] > 0){
+            tiaShadowRAM[CURSOR_ROW]--;
+            tiaShadowRAM[CURSOR_COL] = ROW_LENGTH - 1;
           }else{
-            cursor_col = 0;
+            tiaShadowRAM[CURSOR_COL] = 0;
           }
         }
-        vram_del_char_at(cursor_col, cursor_row);
+        vram_del_char_at(tiaShadowRAM[CURSOR_COL], tiaShadowRAM[CURSOR_ROW]);
     }else if(c >= ' ' && c <= '~'){
-        vram_write_char_at(cursor_col, cursor_row, c);
-        cursor_col++;
-        if(cursor_col >= ROW_LENGTH){
+        vram_write_char_at(tiaShadowRAM[CURSOR_COL], tiaShadowRAM[CURSOR_ROW], c);
+        tiaShadowRAM[CURSOR_COL]++;
+        if(tiaShadowRAM[CURSOR_COL] >= ROW_LENGTH){
             next_row();
         }
+    }else if(c == 12){
+      tiaShadowRAM[CURSOR_COL] = 0;
+      tiaShadowRAM[CURSOR_ROW] = 0;
+      memset(&videoRAM[0], 0, (sizeof(videoRAM) - 20));
+      for(int i = 0; i < NUM_OF_ROWS; i++){
+        int c = i * 5;
+        playfieldShadowRAM[c++] = COL_BORDER;
+        playfieldShadowRAM[c++] = BALL_1_CLK | PF_PRIORITY | PF_REFLECT;
+        playfieldShadowRAM[c++] = BORDER_SHAPE;
+        playfieldShadowRAM[c++] = 0;
+        playfieldShadowRAM[c] = 0;
+      }
     }
 }
 
@@ -600,16 +737,55 @@ RAM_FUNC char get_char(){
     return r;
 }
 
-const uint8_t w_message[] = "TinyELF Basic v0.2 " STR(BASIC_RAM_SIZE) " Bytes Free\nREADY\n";
+char check_char(){
+    return active_char;
+}
 
+void vcs_memwrite2(number_t address, number_t value){
+  if (address & 0x1000){                   // Video RAM
+    videoRAM[address & 0xfff] = value;     // Check for (address & 0xfff) <= 3360  (0xd20)
+  }else if (address & 0x800){              // Character RAM
+    gfxArray[0][address & 0x7ff] = value & 0xf;  // Check for (address & 0x7ff) <= 1296  (0x510)
+  }else if (address & 0x400){              // Background color RAM
+    bkColorRAM[address & 0x3ff] = value;   // Check for (address & 0x3ff) <=  182  (0x0b6)
+//  }else if(address >= 0x280 && address <= 0x297){ // RIOT write (SWACNT, SWBCNT and TIMINIT ?)
+  }else if (address & 0x100){              // Text color RAM
+    txtColorRAM[address & 0x0f] = value;   // Check for (address & 0x0f) <=  14  (0x00e)
+  }else if (address & 0x80){               // playfieldShadowRAM
+    playfieldShadowRAM[address & 0x7F] = value;
+  }else if(address < 0x1b){                // TIA write address
+    tiaShadowRAM[address] = value;
+  }
+}
+
+mem_t vcs_memread2(number_t address){
+  if (address & 0x1000){                   // Video RAM
+    return videoRAM[address & 0xfff];     // Check for (address & 0xfff) <= 3360  (0xd20)
+  }else if (address & 0x800){              // Character RAM
+    return gfxArray[0][address & 0x7ff];   // Check for (address & 0x7ff) <= 1296  (0x510)
+  }else if (address & 0x400){              // Background color RAM
+    return bkColorRAM[address & 0x3ff];   // Check for (address & 0x3ff) <=  182  (0x0b6)
+  }else if(address >= 0x280 && address <= 0x285){ // RIOT I/O reads
+    return riotShadowRAM[address - 0x280];
+  }else if(address >= 0x294 && address <= 0x297){ // RIOT (Timer) read
+    return riotShadowRAM[address - 0x28E];
+  }else if (address & 0x100){              // Text color RAM
+    return txtColorRAM[address & 0x0f];   // Check for (address & 0x0f) <=  14  (0x00e)
+  }else if (address & 0x80){               // playfieldShadowRAM
+    return playfieldShadowRAM[address & 0x7F];
+  }else if(address < 0x1b){               // TIA write address
+    return tiaShadowRAM[address];
+  }
+}
+
+const uint8_t w_message[] = "TinyELF Basic v0.5 " STR(MEMSIZE) " Bytes Free\nREADY\n";
+
+uint32_t tokenCounter = 0;
+bool key_restrainer = false;
 
 RAM_FUNC int elf_main(uint32_t* args) {
     // Always reset PC first, cause it's going to be close to the end of the 6507 address space
     vcsJmp3();
-
-    uint8_t evenFrame = 0;
-    uint32_t tokenCounter;
-    bool key_restrainer = false;
 	
     // Init TIA and RIOT RAM
     vcsLda2(0);
@@ -624,1468 +800,11042 @@ RAM_FUNC int elf_main(uint32_t* args) {
         put_char(w_message[i]);
     }
 
-    char* IL = NULL;
-    StartTinyBasic(IL);                                     /* go do it */
+    setup();
 
-  	while (1){
-	    	vcsEndOverblank();
-
-        renderDisplayFrame(evenFrame);
-
-        // we are in VBLANK after renderDisplay
-        // read controller and switch values from RIOT
-//        uint8_t INPT4_val = vcsRead4(INPT4);
-        uint8_t SWCHA_val = vcsRead4(SWCHA);
-        // uint8_t SWCHB_val = vcsRead4(SWCHB);
-       
-        vcsNop2();
-        vcsStartOverblank();
-        evenFrame = evenFrame ? 0:1;
-
-        if(SWCHA_val != 0b11111111 && !key_restrainer){ // Key pressed
-          active_char = (char)SWCHA_val;
-          key_restrainer = true;
-        }else if(SWCHA_val == 0b11111111 ){
-          key_restrainer = false;
-        }
-
-        // Do ARM and TinyBasic Stuff now
-        tokenCounter = 10;
-        while(tokenCounter-- ){
-          Interp();
-        }
-  	}
+    while (1)
+      loop();
 }
 
 
-/* Tiny Basic Intermediate Language Interpreter -- 2004 July 19 */
+/*----------------------------------------------------------------
+   Please read this before compiling the code.
+    - Review hardware.h for settings specific hardware settings.
+        Super important on Arduino and Raspberry PI.
+    - language.h controls the language features.
+        A heuristic is used to compile the language features if 
+        not defined explicitly in language.h.
+  -----------------------------------------------------------------
 
-/* Default input/output file names, if defined (omit otherwise)... */
-//#define DefaultInputFile "TBasm.txt"
-//#define DefaultOutputFile "TBout.txt"
+ 	Stefan's IoT BASIC interpreter - BASIC for everywhere.
 
-/* File input/output function macros (adjust for C++ framework) */
-//#define FileType           FILE*
-//#define IoFileClose(fi)    fclose(fi)
-//#define InFileChar(fi)     CfileRead(fi)
-//#define OutFileChar(fi,ch) fputc(ch,fi)
-#define ScreenChar(ch)     put_char(ch)
-#define KeyInChar          (char)get_char()
-#define NeedsEcho          true
-#define BreakTest          Broken
+  	See the licence file on
+ 	https://github.com/slviajero/tinybasic for copyright/left.
+      (GNU GENERAL PUBLIC LICENSE, Version 3, 29 June 2007)
 
-/* File input/output function macros (Qt examples:) */
-/* #define FileType           QFile* */
-/* #define IoFileClose(fi)    fi->close() */
-/* #define InFileChar(fi)     (fi->atEnd()?'\0':fi->getch()) */
-/* #define OutFileChar(fi,ch) fi->putch(ch) */
+ 	Author: Stefan Lenz, sl001@serverfabrik.de
+
+ 	Currently there are two versions of the runtime environment.
+ 		One contains all platforms compiled in the Arduino IDE
+ 		(ESP8266, ESP32, AVR, MEGAAVR, SAM*, RP2040, STM*, 
+    XMC*, NRENESA, Arduino GIGA).
+
+
+ 		Anothers contains all platforms compiled in gcc with a POSIX OS
+ 		(Mac, Raspberry, Windows/MINGW) plus rudimentary MSDOS with tc2.0. The
+ 		latter will be removed soon.
+
+  	The interface to BASIC is identical.
+*/
+
+
+/* Global BASIC definitions */
 
 /*
-char CfileRead(FileType fi) {   // C file reader, returns '\0' on eof
-  int chn = fgetc(fi);
-  if (chn == EOF) return '\0';
-  return (char)chn;
-} // ~CfileRead 
+ 	All BASIC keywords for the tokens, PROGMEM on Arduino
+    Normal memory elsewhere.
 */
-/* Constants: */
+const char sge[]   PROGMEM = "=>";
+const char sle[]   PROGMEM = "<=";
+const char sne[]   PROGMEM = "<>";
+/* Palo Alto language set */
+const char sprint[]  PROGMEM = "PRINT";
+const char slet[]    PROGMEM = "LET";
+const char sinput[]  PROGMEM = "INPUT";
+const char sgoto[]   PROGMEM = "GOTO";
+const char sgosub[]  PROGMEM = "GOSUB";
+const char sreturn[] PROGMEM = "RETURN";
+const char sif[]     PROGMEM = "IF";
+const char sfor[]    PROGMEM = "FOR";
+const char sto[]     PROGMEM = "TO";
+const char sstep[]   PROGMEM = "STEP";
+const char snext[]   PROGMEM = "NEXT";
+const char sstop[]   PROGMEM = "STOP";
+const char slist[]   PROGMEM = "LIST";
+const char snew[]    PROGMEM = "NEW";
+const char srun[]  	 PROGMEM = "RUN";
+const char sabs[]    PROGMEM = "ABS";
+const char srnd[]    PROGMEM = "RND";
+const char ssize[]   PROGMEM = "SIZE";
+const char srem[]    PROGMEM = "REM";
+/* Apple 1 language set */
+#ifdef HASAPPLE1
+const char snot[]    PROGMEM = "NOT";
+const char sand[]    PROGMEM = "AND";
+const char sor[]     PROGMEM = "OR";
+const char slen[]    PROGMEM = "LEN";
+const char ssgn[]    PROGMEM = "SGN";
+const char speek[]   PROGMEM = "PEEK";
+const char sdim[]    PROGMEM = "DIM";
+const char sclr[]    PROGMEM = "CLR";
+const char shimem[]  PROGMEM = "HIMEM";
+const char stab[]    PROGMEM = "TAB";
+const char sthen[]   PROGMEM = "THEN";
+const char sbend[]   PROGMEM = "END";
+const char spoke[]   PROGMEM = "POKE";
+#endif
+/* Stefan's basic additions */
+#ifdef HASSTEFANSEXT
+const char scont[]   PROGMEM = "CONT";
+const char ssqr[]    PROGMEM = "SQR";
+const char spow[]    PROGMEM = "POW";
+const char smap[]    PROGMEM = "MAP";
+const char sdump[]   PROGMEM = "DUMP";
+const char sbreak[]  PROGMEM = "BREAK";
+#endif
+/* LOAD and SAVE is always there */
+const char ssave[]   PROGMEM = "SAVE";
+const char sload[]   PROGMEM = "LOAD";
+#ifdef HASSTEFANSEXT
+const char sget[]    PROGMEM = "GET";
+const char sput[]    PROGMEM = "PUT";
+const char sset[]    PROGMEM = "SET";
+const char scls[]    PROGMEM = "CLS";
+const char slocate[]  PROGMEM = "LOCATE";
+const char selse[]  PROGMEM  = "ELSE";
+#endif
+/* Arduino functions */
+#ifdef HASARDUINOIO
+const char spinm[]    PROGMEM = "PINM";
+const char sdwrite[]  PROGMEM = "DWRITE";
+const char sdread[]   PROGMEM = "DREAD";
+const char sawrite[]  PROGMEM = "AWRITE";
+const char saread[]   PROGMEM = "AREAD";
+const char sdelay[] PROGMEM = "DELAY";
+const char smillis[]	PROGMEM = "MILLIS";
+const char sazero[]		PROGMEM = "AZERO";
+const char sled[]		PROGMEM = "LED";
+#endif
+#ifdef HASTONE
+const char stone[]	PROGMEM = "PLAY";
+#endif
+#ifdef HASPULSE
+const char spulse[]	PROGMEM = "PULSE";
+#endif
+/* DOS functions */
+#ifdef HASFILEIO
+const char scatalog[]	PROGMEM = "CATALOG";
+const char sdelete[]	PROGMEM = "DELETE";
+const char sfopen[]		PROGMEM = "OPEN";
+const char sfclose[]	PROGMEM = "CLOSE";
+const char sfdisk[]		PROGMEM = "FDISK";
+#endif
+/* low level access functions */
+#ifdef HASUSRCALL
+const char susr[]   PROGMEM = "USR";
+const char scall[]  PROGMEM = "CALL";
+#endif
+/* mathematics */
+#ifdef HASFLOAT
+const char ssin[]   PROGMEM = "SIN";
+const char scos[]   PROGMEM = "COS";
+const char stan[]   PROGMEM = "TAN";
+const char satan[]  PROGMEM = "ATAN";
+const char slog[]   PROGMEM = "LOG";
+const char sexp[]   PROGMEM = "EXP";
+#endif
+/* INT is always needed to make float/int programs compatible */
+const char sint[]   PROGMEM = "INT";
+/* elemetars graphics */
+#ifdef HASGRAPH
+const char scolor[]     PROGMEM  = "COLOR";
+const char splot[]      PROGMEM  = "PLOT";
+const char sline[]      PROGMEM  = "LINE";
+const char scircle[]    PROGMEM  = "CIRCLE";
+const char srect[]      PROGMEM  = "RECT";
+const char sfcircle[]   PROGMEM  = "FCIRCLE";
+const char sfrect[]     PROGMEM  = "FRECT";
+#endif
+/* Dartmouth BASIC extensions */
+#ifdef HASDARTMOUTH
+const char sdata[]      PROGMEM  = "DATA";
+const char sread[]      PROGMEM  = "READ";
+const char srestore[]   PROGMEM  = "RESTORE";
+const char sdef[]       PROGMEM  = "DEF";
+const char sfn[]        PROGMEM  = "FN";
+const char son[]        PROGMEM  = "ON";
+#endif
+/* The Darkarts commands */
+#ifdef HASDARKARTS
+const char smalloc[]	PROGMEM  = "MALLOC";
+const char sfind[]		PROGMEM  = "FIND";
+const char seval[]		PROGMEM  = "EVAL";
+#endif
+/* complex error handling */
+#ifdef HASERRORHANDLING
+const char serror[]     PROGMEM  = "ERROR";
+#endif
+/* iot extensions */
+#ifdef HASIOT
+const char savail[]		PROGMEM  = "AVAIL";
+const char sstr[]		PROGMEM  = "STR";
+const char sinstr[]		PROGMEM  = "INSTR";
+const char sval[]		PROGMEM  = "VAL";
+const char snetstat[]	PROGMEM  = "NETSTAT";
+const char ssensor[]	PROGMEM  = "SENSOR";
+const char swire[]		PROGMEM  = "WIRE";
+const char ssleep[]		PROGMEM  = "SLEEP";
+#endif
+/* events and interrupts */
+#ifdef HASTIMER
+const char safter[]     PROGMEM  = "AFTER";
+const char severy[]     PROGMEM  = "EVERY";
+#endif
+#ifdef HASEVENTS
+const char sevent[]     PROGMEM  = "EVENT";
+#endif
+#ifdef HASSTRUCT
+const char swhile[]		PROGMEM	= "WHILE";
+const char swend[]      PROGMEM = "WEND";
+const char srepeat[]	PROGMEM	= "REPEAT";
+const char suntil[]     PROGMEM	= "UNTIL";
+const char sswitch[]	PROGMEM	= "SWITCH";
+const char scase[]		PROGMEM	= "CASE";
+const char sswend[]     PROGMEM = "SWEND";
+const char sdo[]        PROGMEM = "DO";
+const char sdend[]      PROGMEM = "DEND";
+#endif
+#ifdef HASDARTMOUTH
+#ifdef HASMULTILINEFUNCTIONS
+const char sfend[]      PROGMEM = "FEND";
+#endif
+#endif
+#ifdef HASMSSTRINGS
+const char sasc[]		PROGMEM	= "ASC";
+const char schr[]		PROGMEM = "CHR";
+const char sright[]		PROGMEM = "RIGHT";
+const char sleft[]		PROGMEM = "LEFT";
+const char smid[]		PROGMEM = "MID";
+const char sspc[]		PROGMEM = "SPC";
+#endif
+#ifdef HASEDITOR
+const char sedit[]		PROGMEM = "EDIT";
+#endif
+#ifdef HASHELP
+const char shelp[]		PROGMEM = "HELP";
+#endif
+/* was BITWISE, now always there because really important */
+const char sshl[]		PROGMEM = "<<";
+const char sshr[]		PROGMEM = ">>";
+const char sbit[]		PROGMEM = "BIT";
+#ifdef HASCAMERA
+const char scam[]	PROGMEM = "CAM";
+#endif
 
-#define aByte unsigned char
-#define CoreTop BASIC_RAM_SIZE /* Core size */
-#define UserProg 32   /* Core address of front of Basic program */
-#define EndUser 34    /* Core address of end of stack/user space */
-#define EndProg 36    /* Core address of end of Basic program */
-#define GoStkTop 38   /* Core address of Gosub stack top */
-#define LinoCore 40   /* Core address of "Current BASIC line number" */
-#define ILPCcore 42   /* Core address of "IL Program Counter" */
-#define BPcore 44     /* Core address of "Basic Pointer" */
-#define SvPtCore 46   /* Core address of "Saved Pointer" */
-#define InLine 48     /* Core address of input line */
-#define ExpnStk 128   /* Core address of expression stack (empty) */
-#define TabHere 191   /* Core address of output line size, for tabs */
-#define WachPoint 255 /* Core address of debug watchpoint USR */
-#define ColdGo 256    /* Core address of nominal restart USR */
-#define WarmGo 259    /* Core address of nominal warm start USR */
-#define InchSub 262   /* Core address of nominal char input USR */
-#define OutchSub 265  /* Core address of nominal char output USR */
-#define BreakSub 268  /* Core address of nominal break test USR */
-#define DumpSub 273   /* Core address of debug core dump USR */
-#define PeekSub 276   /* Core address of nominal byte peek USR */
-#define Peek2Sub 277  /* Core address of nominal 2-byte peek USR */
-#define PokeSub 280   /* Core address of nominal byte poke USR */
-#define TrLogSub 283  /* Core address of debug trace log USR */
-#define BScode 271    /* Core address of backspace code */
-#define CanCode 272   /* Core address of line cancel code */
-#define ILfront 286   /* Core address of IL code address */
-#define BadOp 15      /* illegal op, default IL code */
-  /* Pascal habits die hard.. */
-#define true 1
-#define false 0
 
-/* debugging stuff... */
-#define DEBUGON 0     /* 1 enables \t Debugging toggle, 0 disables */
-#define LOGSIZE 4096  /* how much to log */
-static int Debugging = 0;    /* >0 enables debug code */
-int DebugLog[LOGSIZE];       /* quietly logs recent activity */
-int LogHere = 0;             /* current index in DebugLog */
-int Watcher = 0, Watchee;    /* memory watchpoint */
+/* zero terminated keyword storage */
+const char* const keyword[] PROGMEM = {
+  sge, sle, sne, sprint, slet, sinput,
+  sgoto, sgosub, sreturn, sif, sfor, sto,
+  sstep, snext, sstop, slist, snew, srun,
+  sabs, srnd, ssize, srem,
+#ifdef HASAPPLE1
+  snot, sand, sor, slen, ssgn, speek, sdim,
+  sclr, shimem, stab, sthen,
+  sbend, spoke,
+#endif
+#ifdef HASSTEFANSEXT
+  scont, ssqr, spow, smap, sdump, sbreak,
+#endif
+  ssave, sload,
+#ifdef HASSTEFANSEXT
+  sget, sput, sset, scls, slocate, selse,
+#endif
+#ifdef HASARDUINOIO
+  spinm, sdwrite, sdread, sawrite, saread,
+  sdelay, smillis, sazero, sled,
+#endif
+#ifdef HASTONE
+  stone,
+#endif
+#ifdef HASPULSE
+  spulse,
+#endif
+#ifdef HASFILEIO
+  scatalog, sdelete, sfopen, sfclose, sfdisk,
+#endif
+#ifdef HASUSRCALL
+  susr, scall,
+#endif
+#ifdef HASFLOAT
+  ssin, scos, stan, satan, slog, sexp,
+#endif
+  sint,
+#ifdef HASGRAPH
+  scolor, splot, sline, scircle, srect,
+  sfcircle, sfrect,
+#endif
+#ifdef HASDARTMOUTH
+  sdata, sread, srestore, sdef, sfn, son,
+#endif
+#ifdef HASDARKARTS
+  smalloc, sfind, seval,
+#endif
+  /* complex error handling */
+#ifdef HASERRORHANDLING
+  serror,
+#endif
+#ifdef HASIOT
+  savail, sstr, sinstr, sval,
+  snetstat, ssensor, swire, ssleep,
+#endif
+#ifdef HASTIMER
+  safter, severy,
+#endif
+#ifdef HASEVENTS
+  sevent,
+#endif
+#ifdef HASSTRUCT
+  swhile, swend, srepeat, suntil, sswitch, scase, sswend,
+  sdo, sdend,
+#endif
+#ifdef HASDARTMOUTH
+#ifdef HASMULTILINEFUNCTIONS
+  sfend,
+#endif
+#endif
+#ifdef HASMSSTRINGS
+  sasc, schr, sright, sleft, smid, sspc,
+#endif
+#ifdef HASEDITOR
+  sedit,
+#endif
+#ifdef HASHELP
+  shelp,
+#endif
+  sshl, sshr, sbit,
+#ifdef HASCAMERA
+  scam,
+#endif
+  0
+};
 
-/* Static/global data: */
-aByte Core[CoreTop];    /* everything goes in here */
-aByte DeCaps[128];      /* capitalization table */
-int Lino, ILPC;         /* current line #, IL program counter */
-int BP, SvPt;           /* current, saved TB parse pointer */
-int SubStk, ExpnTop;    /* stack pointers */
-int InLend, SrcEnd;     /* current input line & TB source end */
-int UserEnd;
-int ILend, XQhere;      /* end of IL code, start of execute loop */
-int Broken = false;     /* =true to stop execution or listing */
-int lastLineEnded = true;
+/* the zero terminated token dictonary needed for scalability */
+const token_t tokens[] PROGMEM = {
+  GREATEREQUAL, LESSEREQUAL, NOTEQUAL, TPRINT, TLET,
+  TINPUT, TGOTO, TGOSUB, TRETURN, TIF, TFOR, TTO, TSTEP,
+  TNEXT, TSTOP, TLIST, TNEW, TRUN, TABS, TRND, TSIZE, TREM,
+#ifdef HASAPPLE1
+  TNOT, TAND, TOR, TLEN, TSGN, TPEEK, TDIM, TCLR,
+  THIMEM, TTAB, TTHEN, TEND, TPOKE,
+#endif
+#ifdef HASSTEFANSEXT
+  TCONT, TSQR, TPOW, TMAP, TDUMP, TBREAK,
+#endif
+  TSAVE, TLOAD,
+#ifdef HASSTEFANSEXT
+  TGET, TPUT, TSET, TCLS, TLOCATE, TELSE,
+#endif
+#ifdef HASARDUINOIO
+  TPINM, TDWRITE, TDREAD, TAWRITE, TAREAD, TDELAY, TMILLIS,
+  TAZERO, TLED,
+#endif
+#ifdef HASTONE
+  TTONE,
+#endif
+#ifdef HASPULSE
+  TPULSE,
+#endif
+#ifdef HASFILEIO
+  TCATALOG, TDELETE, TOPEN, TCLOSE, TFDISK,
+#endif
+#ifdef HASSTEFANSEXT
+  TUSR, TCALL,
+#endif
+#ifdef HASFLOAT
+  TSIN, TCOS, TTAN, TATAN, TLOG, TEXP,
+#endif
+  TINT,
+#ifdef HASGRAPH
+  TCOLOR, TPLOT, TLINE, TCIRCLE, TRECT,
+  TFCIRCLE, TFRECT,
+#endif
+#ifdef HASDARTMOUTH
+  TDATA, TREAD, TRESTORE, TDEF, TFN, TON,
+#endif
+#ifdef HASDARKARTS
+  TMALLOC, TFIND, TEVAL,
+#endif
+#ifdef HASERRORHANDLING
+  TERROR,
+#endif
+#ifdef HASIOT
+  TAVAIL, TSTR, TINSTR, TVAL, TNETSTAT,
+  TSENSOR, TWIRE, TSLEEP,
+#endif
+#ifdef HASTIMER
+  TAFTER, TEVERY,
+#endif
+#ifdef HASEVENTS
+  TEVENT,
+#endif
+#ifdef HASSTRUCT
+  TWHILE, TWEND, TREPEAT, TUNTIL, TSWITCH, TCASE, TSWEND,
+  TDO, TDEND,
+#endif
+#ifdef HASDARTMOUTH
+#ifdef HASMULTILINEFUNCTIONS
+  TFEND,
+#endif
+#endif
+#ifdef HASMSSTRINGS
+  TASC, TCHR, TRIGHT, TLEFT, TMID, TSPC,
+#endif
+#ifdef HASEDITOR
+  TEDIT,
+#endif
+#ifdef HASHELP
+  THELP,
+#endif
+  TSHL, TSHR, TBIT,
+#ifdef HASCAMERA
+  TCAM,
+#endif
+  0
+};
 
-//FileType inFile = NULL;     /* from option '-i' or user menu/button */
-//FileType oFile = NULL;      /* from option '-o' or user menu/button */
+/* experimental, do not use right now */
+const bworkfunction_t workfunctions[] PROGMEM = {
+  0, 0, 0, xprint, 0
+};
 
-/************************* Memory Utilities.. *************************/
+/* errors and messages */
+const char mfile[]    	PROGMEM = "file.bas";
+const char mprompt[]	PROGMEM = "> ";
+const char mgreet[]		PROGMEM = "Stefan's Basic 2.0";
+const char mline[]		PROGMEM = "LINE";
+const char mnumber[]	PROGMEM = "NUMBER";
+const char mvariable[]	PROGMEM = "VARIABLE";
+const char marray[]		PROGMEM = "ARRAY";
+const char mstring[]	PROGMEM = "STRING";
+const char mstringv[]	PROGMEM = "STRINGVAR";
+const char egeneral[]  	PROGMEM = "Error";
+#ifdef HASERRORMSG
+const char eunknown[]  	PROGMEM = "Syntax";
+const char enumber[]	PROGMEM = "Number";
+const char edivide[]  	PROGMEM = "Div by 0";
+const char eline[]  	PROGMEM = "Unknown Line";
+const char emem[]  	   	PROGMEM = "Memory";
+const char estack[]    	PROGMEM = "Stack";
+const char erange[]  	PROGMEM = "Range";
+const char estring[]	PROGMEM = "String";
+const char evariable[]  PROGMEM = "Variable";
+const char eloop[]      PROGMEM = "Loop";
+const char efile[]  	PROGMEM = "File";
+const char efun[] 	 	PROGMEM = "Function";
+const char eargs[]  	PROGMEM = "Args";
+const char eeeprom[]	PROGMEM = "EEPROM";
+const char esdcard[]	PROGMEM = "SD card";
+#endif
+#ifdef HASHELP
+#ifdef BASICFULL
+const char mbasiclangset[] PROGMEM = "full";
+#elif defined(BASICSIMPLE)
+const char mbasiclangset[] PROGMEM = "simple with integer";
+#elif defined(BASICINTEGER)
+const char mbasiclangset[] PROGMEM = "integer";
+#elif defined(BASICMINIMAL)
+const char mbasiclangset[] PROGMEM = "minimal";
+#elif defined(BASICSTM32)
+const char mbasiclangset[] PROGMEM = "TinyELF";
+#elif defined(BASICSIMPLEWITHFLOAT)
+const char mbasiclangset[] PROGMEM = "simple with float";
+#elif defined(BASICTINYWITHFLOAT)
+const char mbasiclangset[] PROGMEM = "tiny with float";
+#else
+const char mbasiclangset[] PROGMEM = "custom";
+#endif
+const char mlangset[] PROGMEM = "Language set: ";
+const char mkeywords[] PROGMEM = "Keywords: ";
+#endif
 
-void Poke2(int loc, int valu) {         /* store integer as two bytes */
-  Core[loc] = (aByte)((valu>>8)&255);         /* nominally Big-Endian */
-  Core[loc+1] = (aByte)(valu&255);} /* ~Poke2 */
+const char* const message[] PROGMEM = {
+  mfile, mprompt, mgreet,
+  mline, mnumber, mvariable, marray,
+  mstring, mstringv,
+  egeneral
+#ifdef HASERRORMSG
+  , eunknown, enumber, edivide, eline,
+  emem, estack, erange,
+  estring, evariable, eloop, efile, efun, eargs,
+  eeeprom, esdcard
+#endif
+#ifdef HASHELP
+  , mbasiclangset, mlangset, mkeywords
+#endif
+};
 
-int Peek2(int loc) {                  /* fetch integer from two bytes */
-  return ((int)Core[loc])*256 + ((int)Core[loc+1]);} /* ~Peek2 */
+/*
+ 	maxnum: the maximum accurate(!) integer of a
+ 		32 bit float
+ 	strindexsize: in the new code this is simply the size of the
+  		stringlength type. Currently only 1 byte and 2 bytes are tested.
+*/
+#ifdef HASFLOAT
+#ifdef HAS64BIT 
+const number_t maxnum = 9007199254740992;
+#else   
+const number_t maxnum = 16777216;
+#endif
+#else
+const number_t maxnum = (number_t)~((number_t)1 << (sizeof(number_t) * 8 - 1));
+#endif
+const int numsize = sizeof(number_t);
+const int addrsize = sizeof(address_t);
+const int eheadersize = sizeof(address_t) + 1;
+const int strindexsize = sizeof(stringlength_t); /* default in the meantime, strings up to unsigned 16 bit length */
+const address_t maxaddr = (address_t)(~0);
 
-/************************** I/O Utilities... **************************/
+/*
+ 	The basic interpreter is implemented as a stack machine
+ 	with global variable for the interpreter state, the memory
+ 	and the arithmetic during run time.
+*/
 
-void Ouch(char ch) {                         /* output char to stdout */
-  if (ch=='\r') {
-    Core[TabHere] = 0;         /* keep count of how long this line is */
-    ScreenChar('\n');}
-  else if (ch>=' ') if (ch<='~') {  /* ignore non-print control chars */
-    Core[TabHere]++;
-    ScreenChar(ch);}} /* ~Ouch */
+/* the stack, all BASIC arithmetic is done here */
+accu_t stack[STACKSIZE];
+address_t sp = 0;
 
-char Inch(void) {          /* read input character from stdin or file */
-  char ch;
+/* a small buffer to process string arguments, mostly used for Arduino PROGMEM and string functions */
+/* use with care as it is used in some string functions */
+char sbuffer[SBUFSIZE];
 
-  ch = KeyInChar;                             /* get input from stdin */
-  if(ch == '\0') return ch;
-  if (NeedsEcho) ScreenChar(ch);   /* alternative input may need this */
-  if (ch == '\n') {
-    ch = '\r';                     /* convert line end to TB standard */
-    Core[TabHere] = 0;}                          /* reset tab counter */
-  return ch;
-} /* ~Inch */
+/* the input buffer, the lexer can tokenize this and run from it, bi is an index to this.
+   bi must be global as it is the program cursor in interactive mode */
+char ibuffer[BUFSIZE] = "\0";
+char *bi;
 
-int StopIt(void) {return BreakTest;}   /* ~StopIt, .. not implemented */
+/* a static array of variables A-Z for the small systems that have no heap */
+#ifndef HASAPPLE1
+number_t vars[VARSIZE];
+#endif
 
-void OutStr(char* theMsg) {         /* output a string to the console */
-  while (*theMsg != '\0') Ouch(*theMsg++);} /* ~OutStr */
+/* the BASIC working memory, either malloced or allocated as a global array */
+#if (defined(MEMSIZE) && MEMSIZE != 0)
+mem_t mem[MEMSIZE];
+#else
+mem_t* mem;
+#endif
+address_t himem, memsize;
 
-void OutLn(void) {            /* terminate output line to the console */
-  OutStr("\r");} /* ~OutLn */
+/* reimplementation of the loops, will replace the forstack */
+bloop_t loopstack[FORDEPTH];
+index_t loopsp = 0;
 
-void OutInt(int theNum) {           /* output a number to the console */
-  if (theNum<0) {
-    Ouch('-');
-    theNum = -theNum;}
-  if (theNum>9) OutInt(theNum/10);
-  Ouch((char)(theNum%10+48));} /* ~OutInt */
+/* the GOSUB stack remembers an address to jump to */
+address_t gosubstack[GOSUBDEPTH];
+index_t gosubsp = 0;
 
-/*********************** Debugging Utilities... ***********************/
+/* arithmetic accumulators */
+number_t x, y;
 
-void OutHex(int num, int nd) {  /* output a hex number to the console */
-  if (nd>1) OutHex(num>>4, nd-1);
-  num = num&15;
-  if (num>9) Ouch((char)(num+55));
-    else Ouch((char)(num+48));} /* ~OutHex */
+/* the name of on object, replaced xc and xy in BASIC 1 */
+name_t name;
 
-void ShowSubs(void) {       /* display subroutine stack for debugging */
-  int ix;
-  OutLn(); OutStr(" [Stk "); OutHex(SubStk,5);
-  for (ix=SubStk; ix<UserEnd; ix++) {
-    OutStr(" ");
-    OutInt(Peek2(ix++));}
-  OutStr("]");} /* ~ShowSubs */
+/* an address accumulator, used a lot in string operations */
+address_t ax;
 
-void ShowExSt(void) {       /* display expression stack for debugging */
-  int ix;
-  OutLn(); OutStr(" [Exp "); OutHex(ExpnTop,3);
-  if ((ExpnTop&1)==0) for (ix=ExpnTop; ix<ExpnStk; ix++) {
-    OutStr(" ");
-    OutInt((int)((short)Peek2(ix++)));}
-  else for (ix=ExpnTop; ix<ExpnStk; ix++) {
-    OutStr(".");
-    OutInt((int)Core[ix]);}
-  OutStr("]");} /* ~ShowExSt */
+/* a string index registers, new style identifying a string either in C memory or BASIC memory */
+string_t sr;
 
-void ShowVars(int whom) {               /* display vars for debugging */
-  int ix, valu = 1, prior = 1;
-  if (whom==0) whom = 26; else {
-    whom = (whom>>1)&31;             /* whom is a specified var, or 0 */
-    valu = whom;}
-  OutLn(); OutStr("  [Vars");
-  for (ix=valu; ix<=whom; ix++) {  /* all non-zero vars, or else whom */
-    valu = (int)((short)Peek2(ix*2+ExpnStk));
-    if (valu==0) if (prior==0) continue;          /* omit multiple 0s */
-    prior = valu;
-    OutStr(" ");
-    Ouch((char)(ix+64));                             /* show var name */
-    OutStr("=");
-    OutInt(valu);}
-  OutStr("]");} /* ~ShowVars */
+/* the active token */
+token_t token;
 
-void ShoMemDump(int here, int nlocs) {     /* display hex memory dump */
-  int temp, thar = here&-16;
-  while (nlocs>0) {
-    temp = thar;
-    OutLn();
-    OutHex(here,4);
-    OutStr(": ");
-    while (thar<here) {OutStr("   "); thar++;}
-    do {
-      OutStr(" ");
-      if (nlocs-- >0) OutHex(Core[here],2);
-        else OutStr("  ");}
-      while (++here%16 !=0);
-    OutStr("  ");
-    while (temp<thar) {OutStr(" "); temp++;}
-    while (thar<here) {
-      if (nlocs<0) if ((thar&15) >= nlocs+16) break;
-      temp = Core[thar++];
-      if (temp == (int)'\r') Ouch('\\');
-      else if (temp<32) Ouch('`');
-      else if (temp>126) Ouch('~');
-        else Ouch((char)temp);}}
-  OutLn();} /* ~ShoMemDump */
+/* the curent error, can be a token, hence token type */
+token_t er;
+/* the jmp buffer for the error handling */
+#if USELONGJUMP == 1
+jmp_buf sthook;
+#endif
 
-void ShoLogVal(int item) {   /* format & output one activity log item */
-  int valu = DebugLog[item];
-  OutLn();
-  if (valu < -65536) {                         /* store to a variable */
-    Ouch((char)(((valu>>17)&31)+64));
-    OutStr("=");
-    OutInt((valu&0x7FFF)-(valu&0x8000));}
-  else if (valu < -32768) {                                /* error # */
-    OutStr("Err ");
-    OutInt(-valu-32768);}
-  else if (valu<0) {                 /* only logs IL sequence changes */
-    OutStr("  IL+");
-    OutHex(-Peek2(ILfront)-valu,3);}
-  else if (valu<65536) {                          /* TinyBasic line # */
-    OutStr("#");
-    OutInt(valu);}
-  else {                                          /* poke memory byte */
-    OutStr("!");
-    OutHex(valu,4);
-    OutStr("=");
-    OutInt(valu>>16);}} /* ~ShoLogVal */
+/* a trapable error */
+mem_t ert;
 
-void ShowLog(void) {            /* display activity log for debugging */
-  int ix;
-  OutLn();
-  OutStr("*** Activity Log @ ");
-  OutInt(LogHere);
-  OutStr(" ***");
-  if (LogHere >= LOGSIZE)   /* circular, show only last 4K activities */
-    for (ix=(LogHere&(LOGSIZE-1)); ix<LOGSIZE; ix++) ShoLogVal(ix);
-  for (ix=0; ix<(LogHere&(LOGSIZE-1)); ix++) ShoLogVal(ix);
-  OutLn();
-  OutStr("*****");
-  OutLn();} /* ~ShowLog */
+/* the interpreter state, interactive, run or run from EEPROM */
+mem_t st;
 
-void LogIt(int valu) {          /* insert this valu into activity log */
-  DebugLog[(LogHere++)&(LOGSIZE-1)] = valu;}
+/* the current program location */
+address_t here;
 
-/************************ Utility functions... ************************/
+/* the topmost byte of a program in memory, beginning of free BASIC RAM */
+address_t top;
 
-void WarmStart(void) {                 /* initialize existing program */
-  UserEnd = Peek2(EndUser);
-  SubStk = UserEnd;            /* empty subroutine, expression stacks */
-  Poke2(GoStkTop,SubStk);
-  ExpnTop = ExpnStk;
-  Lino = 0;                                        /* not in any line */
-  ILPC = 0;                                      /* start IL at front */
-  SvPt = InLine;
-  BP = InLine;
-  Core[BP] = 0;
-  Core[TabHere] = 0;
-  InLend = InLine;
-} /* ~WarmStart */
+/* used to format output with # */
+mem_t form = 0;
 
-void ColdStart(void) {                 /* initialize program to empty */
-  if (Peek2(ILfront) != ILfront+2) ILend = Peek2(ILfront)+0x800;
-  Poke2(UserProg,(ILend+255)&-256);   /* start Basic shortly after IL */
-  if (CoreTop>65535) {
-    Poke2(EndUser,65534);
-    Poke2(65534,0xDEAD);}
-  else Poke2(EndUser,CoreTop);
-  WarmStart();
-  SrcEnd = Peek2(UserProg);
-  Poke2(SrcEnd++,0);
-  Poke2(EndProg,++SrcEnd);} /* ~ColdStart */
+/* do we use the Microsoft convention of an array starting at 0 or 1 like Apple 1
+	two seperate variables because arraylimit can be changed at runtime for existing arrays
+	msarraylimit says if an array should be created with n or n+1 elements */
+#ifdef MSARRAYLIMITS
+mem_t msarraylimits = 1;
+address_t arraylimit = 0;
+#else
+mem_t msarraylimits = 0;
+address_t arraylimit = 1;
+#endif
 
-void TBerror(int pla) {                   /* report interpreter error */
-  if (ILPC == 0) return;                       /* already reported it */
-  OutLn();
-  LogIt(-ILPC-32768);
-  OutStr("TB error #");                  /* IL address is the error # */
-  OutInt(pla);
-  OutStr(" #");                          /* IL address is the error # */
-  OutInt(ILPC-Peek2(ILfront));
-  if (Lino>0) {                          /* Lino=0 if in command line */
-    OutStr(" at line ");
-    OutInt(Lino);}
-  OutLn();
-  if (Debugging>0) {                /* some extra info if debugging.. */
-    ShowSubs();
-    ShowExSt();
-    ShowVars(0);
-    OutStr(" [BP=");
-    OutHex(BP,4);
-    OutStr(", TB@");
-    OutHex(Peek2(UserProg),4);
-    OutStr(", IL@");
-    OutHex(Peek2(ILfront),4);
-    OutStr("]");
-    ShoMemDump((BP-30)&-16,64);}
-  Lino = 0;                           /* restart interpreter at front */
-  ExpnTop = ExpnStk;                   /* with empty expression stack */
-  ILPC = 0;       /* cheap error test; interp reloads it from ILfront */
-  BP = InLine;} /* ~TBerror */
+/* behaviour around boolean, needed to change the interpreters personality at runtime */
+/* -1 is microsoft true while 1 is Apple 1 and C style true. */
+mem_t booleanmode = BOOLEANMODE;
 
-void PushSub(int valu) {               /* push value onto Gosub stack */
-  if (SubStk<=SrcEnd) TBerror(1); /* overflow: bumped into program end */
-  else {
-    SubStk = SubStk-2;
-    Poke2(GoStkTop,SubStk);
-    Poke2(SubStk,valu);}
-  if (Debugging>0) ShowSubs();} /* ~PushSub */
+/* setting the interpreter to integer at runtime */
+mem_t forceint = 0;
 
-int PopSub(void) {                       /* pop value off Gosub stack */
-  if (SubStk>=Peek2(EndUser)-1) {   /* underflow (nothing in stack).. */
-    TBerror(2);
-    return -1;}
-  else {
-      if (Debugging>1) ShowSubs();
-    SubStk = SubStk+2;
-    Poke2(GoStkTop,SubStk);
-    return Peek2(SubStk-2);}} /* ~PopSub */
+/* the default size of a string now as a variable */
+stringlength_t defaultstrdim = STRSIZEDEF;
 
-void PushExBy(int valu) {          /* push byte onto expression stack */
-  if (ExpnTop<=InLend) TBerror(3); /* overflow: bumped into input line */
-    else Core[--ExpnTop] = (aByte)(valu&255);
-  if (Debugging>0) ShowExSt();} /* ~PushExBy */
+/* the base of the random number generator
+ 	0 is Apple 1 style RND from 0 to n-epsilon
+ 	1 is Palo Alto style from 1 to n
+*/
+mem_t randombase = 0;
 
-int PopExBy(void) {                  /* pop byte off expression stack */
-  if (ExpnTop<ExpnStk) return (int)Core[ExpnTop++];
-  TBerror(4);                          /* underflow (nothing in stack) */
-  return -1;
-} /* ~PopExBy */
+/* is substring logic used or not */
+#ifdef SUPPRESSSUBSTRINGS
+mem_t substringmode = 0;
+#else
+mem_t substringmode = 1;
+#endif
 
-void PushExInt(int valu) {      /* push integer onto expression stack */
-  ExpnTop = ExpnTop-2;
-  if (ExpnTop<InLend) TBerror(5);  /* overflow: bumped into input line */
-    else Poke2(ExpnTop,valu);
-  if (Debugging>0) ShowExSt();
-} /* ~PushExInt */
+/* the flag for true MS tabs */
+mem_t reltab = 0;
+mem_t dummy;
 
-int PopExInt(void) {              /* pop integer off expression stack */
-  if (++ExpnTop<ExpnStk) return (int)((short)Peek2((ExpnTop++)-1));
-  TBerror(6);    /* underflow (nothing in stack) */
-  return -1;
-} /* ~PopExInt */
+/* the flag for lower case names */
+mem_t lowercasenames = 0;
 
-int DeHex(char* txt, int ndigs) {                /* decode hex -> int */
-  int num = 0;
-  char ch = ' ';
-  while (ch<'0')                              /* first skip to num... */
-    if (ch == '\0') return -1; else ch = DeCaps[((int)*txt++)&127];
-  if (ch>'F' || (ch>'9' && ch<'A')) return -1;               /* not hex */
-  while ((ndigs--) >0) {                 /* only get requested digits */
-    if (ch<'0' || ch>'F') return num;              /* not a hex digit */
-    if (ch>='A') num = num*16-55+((int)ch);      /* A-F */
-    else if (ch<='9') num = num*16-48+((int)ch); /* 0-9 */
-      else return num;          /* something in between, i.e. not hex */
-    ch = DeCaps[((int)*txt++)&127];}
-  return num;} /* ~DeHex */
+/* the number of arguments parsed from a command */
+mem_t args;
 
-int SkipTo(int here, char fch) {     /* search for'd past next marker */
-  while (true) {
-    char ch = (char)Core[here++];                /* look at next char */
-    if (ch == fch) return here;                             /* got it */
-    if (ch == '\0') return --here;}} /* ~SkipTo */
+/* the random number seed, this is unsigned */
+#ifndef HASFLOAT
+address_t rd;
+#else
+unsigned long rd;
+#endif
 
-int FindLine(int theLine) {         /* find theLine in TB source code */
-  int ix;
-  int here = Peek2(UserProg);                       /* start at front */
-  while (true) {
-    ix = Peek2(here++);
-    if (theLine<=ix || ix==0) return --here;  /* found it or overshot */
-    here = SkipTo(++here, '\r');}         /* skip to end of this line */
-  } /* ~FindLine */
+/* the RUN debuglevel */
+mem_t debuglevel = 0;
 
-void GoToLino(void) {     /* find line # Lino and set BP to its front */
-  int here;
-  if (Lino <= 0) {              /* Lino=0 is just command line (OK).. */
-    BP = InLine;
-    if (DEBUGON>0) LogIt(0);
-    return;}
-  if (DEBUGON>0) LogIt(Lino);
-  if (Debugging>0) {OutStr(" [#"); OutInt(Lino); OutStr("]");}
-  BP = FindLine(Lino);                  /* otherwise try to find it.. */
-  here = Peek2(BP++);
-  if (here==0) TBerror(7);               /* ran off the end, error off */
-  else if (Lino != here) TBerror(8);                      /* not there */
-    else BP++;} /* ~GoToLino */                             /* got it */
+/* DATA pointer, where is the current READ statement  */
+#ifdef HASDARTMOUTH
+address_t data = 0;
+address_t datarc = 1;
+#endif
 
-void ListIt(int frm, int too) {            /* list the stored program */
-  char ch;
-  int here;
-  if (frm==0) {           /* 0,0 defaults to all; n,0 defaults to n,n */
-    too = 65535;
-    frm = 1;}
-  else if (too==0) too = frm;
-  here = FindLine(frm);                   /* try to find first line.. */
-  while (!StopIt()) {
-    frm = Peek2(here++);             /* get this line's # to print it */
-    if (frm>too || frm==0) break;
-    here++;
-    OutInt(frm);
-    Ouch(' ');
-    do {                                            /* print the text */
-      ch = (char)Core[here++];
-      Ouch(ch);}
-      while (ch>'\r');}} /* ~ListIt */
+/*
+   process command line arguments in the POSIX world
+   bnointafterrun is a flag to remember if called as command
+   line argument, in this case we don't return to interactive
+*/
+#ifdef HASARGS
+int bargc;
+char** bargv;
+mem_t bnointafterrun = 0;
+#endif
 
-void ConvtIL(char* txt) {                 /* convert & load TBIL code */
-  int valu;
-  ILend = ILfront+2;
-  Poke2(ILfront,ILend);    /* initialize pointers as promised in TBEK */
-  Poke2(ColdGo+1,ILend);
-  Core[ILend] = (aByte)BadOp;   /* illegal op, in case nothing loaded */
-  if (txt == NULL) return;
-  while (*txt != '\0') {                            /* get the data.. */
-    while (*txt > '\r') txt++;               /* (no code on 1st line) */
-    if (*txt++ == '\0') break;                      /* no code at all */
-    while (*txt > ' ') txt++;                    /* skip over address */
-    if (*txt++ == '\0') break;
-    while (true) {
-      valu = DeHex(txt++, 2);                           /* get a byte */
-      if (valu<0) break;                      /* no more on this line */
-      Core[ILend++] = (aByte)valu;      /* insert this byte into code */
-      txt++;}}
-  XQhere = 0;                        /* requires new XQ to initialize */
-  Core[ILend] = 0;} /* ~ConvtIL */
+/* formaters lastouttoken and spaceafterkeyword to make a nice LIST */
+mem_t lastouttoken;
+mem_t spaceafterkeyword;
+mem_t outliteral = 0;
+mem_t lexliteral = 0;
 
-void LineSwap(int here) {   /* swap SvPt/BP if here is not in InLine  */
-  if (here<InLine || here>=InLend) {
-    here = SvPt;
-    SvPt = BP;
-    BP = here;}
-  else SvPt = BP;} /* ~LineSwap */
+/*
+   The cache for the heap search - helps the string code.
+   The last found object on the heap is remembered. This is needed
+   because the string code sometime searches the heap twice during the
+   same operation. Also, bfind is used to remember the length of the
+   last found object.
+*/
+#ifdef HASAPPLE1
+heap_t bfind_object;
+#endif
 
-/************************** Main Interpreter **************************/
+/*
+   a variable for string to numerical conversion,
+   telling you were the number ended.
+*/
+address_t vlength;
 
-void Interp(void) {
-  char ch;    /* comments from TinyBasic Experimenter's Kit, pp.15-21 */
-  int op, ix, here, chpt;                                    /* temps */
-  Broken = false;          /* initialize this for possible later test */
-//  while (true) {
-    if (StopIt()) {
-      Broken = false;
-      OutLn();
-      OutStr("*** User Break ***");
-      TBerror(9);}
-    if (ILPC==0) {
-      ILPC = Peek2(ILfront);
-      if (DEBUGON>0) LogIt(-ILPC);
-      if (Debugging>0) {
-        OutLn(); OutStr("[IL="); OutHex(ILPC,4); OutStr("]");}}
-    if (DEBUGON>0) if (Watcher>0) {             /* check watchpoint.. */
-      if (((Watchee<0) && (Watchee+256+(int)Core[Watcher]) !=0)
-          || ((Watchee >= 0) && (Watchee==(int)Core[Watcher]))) {
-        OutLn();
-        OutStr("*** Watched ");
-        OutHex(Watcher,4);
-        OutStr(" = ");
-        OutInt((int)Core[Watcher]);
-        OutStr(" *** ");
-        Watcher = 0;
-        TBerror(10);
-        goto _skip;}}
-    op = (int)Core[ILPC++];
-      if (Debugging>0) {
-        OutLn(); OutStr("[IL+"); OutHex(ILPC-Peek2(ILfront)-1,3);
-        OutStr("="); OutHex(op,2); OutStr("]");}
-    switch (op>>5) {
-    default: switch (op) {
-      case 15:
-        TBerror(11);
+/* the timer code - very simple needs to be converted to to a struct */
+/* timer type */
+#ifdef HASTIMER
+btimer_t after_timer = {0, 0, 0, 0, 0};
+btimer_t every_timer = {0, 0, 0, 0, 0};
+#endif
+
+/* the event code */
+#ifdef HASEVENTS
+
+/* should go to the headers eventually */ 
+#define EVENTLISTSIZE 4
+
+/* the event list, nevents is the number of active events */
+mem_t nevents = 0;
+int ievent = 0;
+mem_t events_enabled = 1;
+volatile bevent_t eventlist[EVENTLISTSIZE];
+
+/* the extension of the GOSUB stack */
+mem_t gosubarg[GOSUBDEPTH];
+#endif
+
+#ifdef HASERRORHANDLING
+/* the error handler type, very simple for now */
+typedef struct {
+  mem_t type;
+  address_t linenumber;
+} berrorh_t;
+
+berrorh_t berrorh = {0 , 0};
+mem_t erh = 0;
+#endif
+
+/* the string for real time clocks */
+char rtcstring[20] = { 0 };
+
+/* the units pulse operates on, in microseconds*/
+address_t bpulseunit = 10;
+
+/* only needed if the break condition is handled in the background */
+char breakcondition = 0;
+
+/* the FN context, how deep are we in a nested function call, negative values reserved */
+int fncontext = 0;
+
+/* the accuracy of a equal or not equal statement on numbers */
+#ifdef HASFLOAT
+number_t epsilon = 0;
+#else
+const number_t epsilon = 0;
+#endif
+
+/* the number of digits displayed in the fraction of a float */
+#ifdef HASFLOAT
+mem_t precision = 5;
+#endif
+
+/*
+ *  BASIC timer stuff, this is a core interpreter function now
+ */
+
+/* the millis function for BASIC */
+void bmillis() {
+  number_t m;
+  /* millis is processed as integer and is cyclic mod maxnumber and not cast to float!! */
+  m = (number_t) (millis() / (unsigned long)pop() % (unsigned long)maxnum);
+  push(m);
+}
+
+/*
+ *   Determine the possible basic memory size.
+ * 	using malloc causes some overhead which can be relevant on the smaller
+ *	boards.
+ *
+ * Set MEMSIZE instead to a static value. In this case ballocmem
+ * just returns the static MEMSIZE.
+ * 
+ * If SPIRAMINTERFACE is defined, we use the memory from a serial RAM and dont
+ * allocate it here at all.
+ */
+
+#if (!defined(MEMSIZE) || MEMSIZE == 0) && !(defined(SPIRAMINTERFACE))
+address_t ballocmem() {
+
+  /* on most platforms we know the free memory for BASIC, this comes from runtime */
+  long m = freememorysize();
+
+  /* we subtract some language feature depended things, this is only needed on
+  	small Arduino boards with memories below 16kb */
+  if (m < 16000) {
+#ifdef HASAPPLE1
+    m -= 64; /* strings cost memory */
+#endif
+#ifdef USELONGJUMP
+    m -= 160; /* odd but true on Ardunio UNO and the like */
+#endif
+#ifdef HASFLOAT
+    m -= 96;
+#endif
+#ifdef HASGRAPH
+    m -= 256;
+#endif
+  }
+
+  /* and keep fingers crossed here */
+  if (m < 0) m = 128;
+
+  /* we allocate as much as address_t can handle */
+  if (m > maxaddr) m = maxaddr;
+
+  /* try to allocate the memory */
+  mem = (mem_t*)malloc(m);
+  if (mem != 0) return m - 1;
+
+  /* fallback if allocation failed, 128 bytes */
+  mem = (mem_t*)malloc(128);
+  if (mem != 0) return 128; else return 0;
+
+}
+#else
+address_t ballocmem() {
+  return MEMSIZE - 1;
+};
+#endif
+
+/*
+ 	Layer 0 function - variable handling.
+
+ 	These function access variables and data
+*/
+
+/*
+ 	Eeprom load / save / autorun functions
+ 	needed for SAVE and LOAD to an EEPROM
+ 	autorun is generic.
+
+ 	The eeprom is accessed through the runtime functions
+  	elength(), eupdate(), ewrite() and eflush();
+
+*/
+
+/* save a file to EEPROM, disabled if we use the EEPROM directly */
+void esave() {
+#ifndef EEPROMMEMINTERFACE
+  address_t a = 0;
+
+  /* does the program fit into the eeprom */
+  if (top + eheadersize < elength()) {
+
+    /* EEPROM per default is 255, 0 indicates that there is a program */
+    eupdate(a++, 0);
+
+    /* store the size of the program in byte 1,2,... of the EEPROM*/
+    setaddress(a, beupdate, top);
+    a += addrsize;
+
+    /* store the program */
+    while (a < top + eheadersize) {
+      eupdate(a, memread2(a - eheadersize));
+      a++;
+    }
+    eupdate(a++, 0);
+
+    /* needed on I2C EEPROM and other platforms where we buffer */
+    eflush();
+
+  } else {
+    error(EOUTOFMEMORY);
+    er = 0;
+  }
+#endif
+}
+
+/* load a file from EEPROM, disabled if the use the EEPROM directly */
+void eload() {
+#ifndef EEPROMMEMINTERFACE
+  address_t a = 0;
+
+  /* have we stored a program? */
+  if (elength() > 0 && (eread(a) == 0 || eread(a) == 1)) {
+
+    /* how long is it? */
+    a++;
+    top = getaddress(a, beread);
+    a += addrsize;
+
+    /* load it to memory, memwrite2 is direct mem access */
+    while (a < top + eheadersize) {
+      memwrite2(a - eheadersize, beread(a));
+      a++;
+    }
+  } else {
+    /* no valid program data is stored */
+    error(EEEPROM);
+  }
+#endif
+}
+
+/* autorun something from EEPROM or a filesystem */
+char autorun() {
+
+  /* autorun from EEPROM if there is an EEPROM flagged for autorun */
+  if (elength() > 0 && eread(0) == 1) { /* autorun from the EEPROM */
+    top = getaddress(1, beread);
+    st = SERUN;
+    return 1; /* EEPROM autorun overrules filesystem autorun */
+  }
+
+  /* autorun from a given command line argument, if we have one */
+#ifdef HASARGS
+  if (bargc > 1 && ifileopen(bargv[1])) {
+    xload(bargv[1]);
+    st = SRUN;
+    ifileclose();
+    bnointafterrun = TERMINATEAFTERRUN;
+    return 1;
+  }
+#endif
+
+  /* on a platform with a file system, autoexec from a file */
+#if defined(FILESYSTEMDRIVER)
+  if (ifileopen("autoexec.bas")) {
+    xload("autoexec.bas");
+    st = SRUN;
+    ifileclose();
+    return 1;
+  }
+#endif
+
+  /* nothing to autorun */
+  return 0;
+}
+
+#ifdef HASAPPLE1
+/*
+   The new malloc code. Heap structure is now
+   payload
+   (payload size)
+   name
+   type
+
+   In the new heap implementation himem points to the first free byte on the heap.
+   The payload is stored first and then the header.
+
+   The new heap code uses name_t for the name of the object.
+
+*/
+
+address_t bmalloc(name_t* name, address_t l) {
+  address_t payloadsize;     /* the payload size */
+  address_t heapheadersize = sizeof(name_t) + addrsize; /* this is only used to estimate the free space, it is the maximum */
+  address_t b = himem; /* the current position on the heap, we store it in case of errors */
+
+  /* Initial DEBUG message. */
+  if (DEBUG) {
+    outsc("** bmalloc with token ");
+    outnumber(name->token); outspc();
+    outname(name); outspc();
+    outnumber(l); outcr();
+  }
+
+  /*
+   	How much space does the payload of the object need?
+  */
+  switch (name->token) {
+    case VARIABLE: /* a variable needs numsize bytes*/
+      payloadsize = numsize;
+
+      break;
+#ifndef HASMULTIDIM
+    case ARRAYVAR: /* a one dimensional array needs numsize*l bytes */
+      payloadsize = numsize * l;
+      break;
+#else
+    case ARRAYVAR: /* a two dimensional array needs numsize*l bytes plus one word for the additional dimension*/
+      payloadsize = numsize * l + addrsize;
+      break;
+#endif
+#ifdef HASDARTMOUTH
+    case TFN: /* the jump address, the type of function/type of return value, the number of vars
+			and all variables are stored*/
+      payloadsize = addrsize + 2 + sizeof(name_t) * l;
+      break;
+#endif
+    /* these are plain buffers allocated by the MALLOC call in BASIC */
+    default:
+      payloadsize = l;
+  }
+
+  /* enough memory ?, on an EEPROM system we limit the heap to the RAM */
+#ifndef EEPROMMEMINTERFACE
+  if ((himem - top) < payloadsize + heapheadersize) {
+    error(EOUTOFMEMORY);
+    return 0;
+  }
+#else
+  if (himem - (elength() - eheadersize) < payloadsize + heapheadersize) {
+    error(EOUTOFMEMORY);
+    return 0;
+  }
+#endif
+
+  /* first we reserve space for the payload, address points to the first byte of the payload */
+  /* b points to the first free byte after the payload*/
+  b -= payloadsize;
+  bfind_object.address = b + 1;
+
+  /* for ARRAYS, STRINGS and BUFFERS, store the object length now - these are variable size objects*/
+  if (name->token != VARIABLE) {
+    b -= (addrsize - 1);
+    setaddress(b, memwrite2, payloadsize);
+    if (DEBUG) {
+      outsc("** bmalloc writes payloadsize "); outnumber(payloadsize);
+      outsc(" at "); outnumber(b); outcr();
+    }
+    b--;
+  }
+
+  /* store the name of the objects including the type as identifier */
+  b = setname_heap(b, name);
+
+  /* store the type of the object */
+  memwrite2(b--, name->token);
+
+  /* if anything went wrong we exit here without changing himem */
+  if (b < top || er) {
+    error(EOUTOFMEMORY);
+    return 0;
+  }
+
+  /* we fill the cache here as well, both right now for compatibility */
+  bfind_object.name = *name;
+  bfind_object.size = payloadsize;
+
+  /* himem is the next free byte now again */
+  himem = b;
+
+  if (DEBUG) {
+    outsc("** bmalloc returns "); outnumber(bfind_object.address);
+    outsc(" himem is "); outnumber(himem); outcr();
+  }
+
+  /* return the address of the payload */
+  return bfind_object.address;
+}
+
+address_t bfind(name_t* name) {
+  address_t b, b0;
+  address_t i = 0;
+
+  /* Initial DEBUG message. */
+  if (DEBUG) {
+    outsc("*** bfind called for "); outname(name);
+    outsc(" on heap with token "); outnumber(name->token);
+    outsc(" himem is "); outnumber(himem);  outcr();
+  }
+
+  /* do we have anything on the heap? */
+  if (himem == memsize) return 0; else b = himem + 1;
+
+  /* we have the object already in cache and return */
+  if (name->token == bfind_object.name.token && cmpname(name, &bfind_object.name)) {
+    if (DEBUG) {
+      outsc("*** bfind found in cache ");
+      outname(name);
+      outsc(" at ");
+      outnumber(bfind_object.address);
+      outcr();
+    }
+    return bfind_object.address;
+  }
+
+  /* walk through the heap from the last object added to the first */
+  while (b <= memsize) {
+
+    /* get the name and the type and advance */
+    bfind_object.name.token = memread2(b++);
+    b = getname(b, &bfind_object.name, memread2);
+
+    /* determine the size of the object and advance */
+    if (bfind_object.name.token != VARIABLE) {
+      bfind_object.size = getaddress(b, memread2);
+      b += addrsize;
+    } else {
+      bfind_object.size = numsize;
+    }
+
+    /* this is the location of the payload */
+    bfind_object.address = b;
+
+    /* have we found the object */
+    if (name->token == bfind_object.name.token && cmpname(name, &bfind_object.name)) {
+      if (DEBUG) {
+        outsc("*** bfind found ");
+        outname(name);
+        outsc(" at ");
+        outnumber(bfind_object.address);
+        outcr();
+      }
+      return bfind_object.address;
+    }
+
+    /* advance on the heap */
+    b0 = b;
+    b += bfind_object.size;
+
+    /* safety net for wraparound situations - should never happen - means corrupt heap */
+    if (b0 > b) {
+      error(EVARIABLE);
+      return 0;
+    }
+
+  }
+
+  /* nothing found return 0 and clear the cache */
+
+  if (DEBUG) {
+    outsc("bfind returns 0");
+    outcr();
+  }
+  zeroheap(&bfind_object);
+  return 0;
+}
+
+/* reimplementation bfree with name interface */
+address_t bfree(name_t* name) {
+  address_t b;
+
+  if (DEBUG) {
+    outsc("*** bfree called for ");
+    outname(name);
+    outsc(" on heap with token ");
+    outnumber(name->token);
+    outcr();
+  }
+
+  /* use bfind to find the place */
+  b = bfind(name);
+
+  /* nothing found, return 0 */
+  if (b == 0) return 0;
+
+  if (DEBUG) {
+    outsc("** bfree found ");
+    outnumber(b);
+    outcr();
+  }
+
+  /* clear the entire memory area */
+  for (address_t i = himem; i <= b + bfind_object.size - 1; i++) memwrite2(i, 0);
+
+  /* set the number of variables to the new value */
+  himem = b + bfind_object.size - 1;
+
+  if (DEBUG) {
+    outsc("** bfree returns ");
+    outnumber(himem);
+    outcr();
+  }
+
+  /* forget the chache, because heap structure has changed !! */
+  zeroheap(&bfind_object);
+  return himem;
+}
+
+/* the length of an object, we directly return from the cache */
+address_t blength(name_t* name) {
+  if (bfind(name)) return bfind_object.size; else return 0;
+}
+#endif /* HASAPPLE1 */
+
+/* reimplementation of getvar and setvar with name_t */
+number_t getvar(name_t *name) {
+  address_t a;
+
+  if (DEBUG) {
+    outsc("* getvar ");
+    outname(name);
+    outspc();
+    outcr();
+  }
+
+  /* the special variables */
+  if (name->c[0] == '@') {
+#ifdef HASLONGNAMES
+    if (name->l == 1) name->c[1] = 0; /* to make sure @ alone works */
+#endif
+    switch (name->c[1]) {
+      case 'A':
+        return availch();
+      case 'S':
+        return ert | ioer;
+      case 'I':
+        return id;
+      case 'O':
+        return od;
+      case 'T':
+        return millis();
+      case 'C':
+        if (availch()) return inch(); else return 0;
+      case 'E':
+        return elength() / numsize;
+      case 0:
+        return (himem - top) / numsize;
+      case 'R':
+        return rd;
+#ifdef HASSTEFANSEXT
+      case 'U':
+        return getusrvar();
+#endif
+#ifdef HASFLOAT
+      case 'P':
+        return epsilon;
+#endif
+#ifdef HASIOT
+      case 'V':
+        return vlength;
+#endif
+#if defined(DISPLAYDRIVER) || defined (GRAPHDISPLAYDRIVER)
+      case 'X':
+        return dspgetcursorx();
+      case 'Y':
+        return dspgetcursory();
+#endif
+    }
+  }
+
+#ifdef HASAPPLE1
+  /* search the heap first */
+  a = bfind(name);
+  if (!USELONGJUMP && er) return 0;
+
+  /* if we don't find on the heap and it is not a static variable, we autocreate */
+  if (a == 0) {
+    a = bmalloc(name, 0);
+    if (!USELONGJUMP && er) return 0;
+  }
+
+  /* something went wrong  */
+  if (a == 0) {
+    error(EVARIABLE);
+    return 0;
+  }
+  /* retrieve the value */
+  return getnumber(a, memread2);
+
+#else
+  /* we only have the static variable array */
+  if (name->c[0] >= 65 && name->c[0] <= 91 && name->c[1] == 0) return vars[name->c[0] - 65];
+
+  /* systems without Apple1 extension i.e. HEAP throw an error */
+  error(EVARIABLE);
+  return 0;
+#endif
+}
+
+/* set and create a variable */
+void setvar(name_t *name, number_t v) {
+  address_t a;
+
+  if (DEBUG) {
+    outsc("* setvar ");
+    outname(name);
+    outspc();
+    outnumber(v);
+    outcr();
+  }
+
+  /* the special variables */
+  if (name->c[0] == '@')
+    switch (name->c[1]) {
+      case 'S':
+        ert = v;
+        ioer = v;
         return;
+      case 'I':
+        id = v;
+        return;
+      case 'O':
+        od = v;
+        return;
+      case 'T':
+        return;
+      case 'C':
+        outch(v);
+        return;
+      case 'R':
+        rd = v;
+        return;
+#ifdef HASTEFANSEXT
+      case 'U':
+        setusrvar(v);
+        return;
+#endif
+#ifdef HASFLOAT
+      case 'P':
+        epsilon = v;
+        return;
+#endif
+#ifdef HASIOT
+      case 'V':
+        return;
+#endif
+#if defined(DISPLAYDRIVER) || defined(GRAPHDISPLAYDRIVER)
+      case 'X':
+        dspsetcursorx((int)v);
+        /* set the charcount, this is half broken but works */
+#ifdef HASMSTAB
+        if (od > 0 && od <= OPRT) charcount[od] = v;
+#endif
+        return;
+      case 'Y':
+        dspsetcursory((int)v);
+        return;
+#endif
+    }
 
-/* SX n    00-07   Stack Exchange. */
-/*                 Exchange the top byte of computational stack with  */
-/* that "n" bytes into the stack. The top/left byte of the stack is   */
-/* considered to be byte 0, so SX 0 does nothing.                     */
-      case 1: case 2: case 3: case 4: case 5: case 6: case 7:
-        if (ExpnTop+op>=ExpnStk) {       /* swap is below stack depth */
-          TBerror(12);
-          return;}
-        ix = (int)Core[ExpnTop];
-        Core[ExpnTop] = Core[ExpnTop+op];
-        Core[ExpnTop+op] = (aByte)ix;
-        if (Debugging>0) ShowExSt();
-        break;
+#ifdef HASAPPLE1
+  /* dynamically allocated vars */
+  a = bfind(name);
 
-/* LB n    09nn    Push Literal Byte onto Stack.                      */
-/*                 This adds one byte to the expression stack, which  */
-/* is the second byte of the instruction. An error stop will occur if */
-/* the stack overflows. */
-      case 9:
-        PushExBy((int)Core[ILPC++]);                  /* push IL byte */
-        break;
+  /* autocreate if not found */
+  if (a == 0) {
+    a = bmalloc(name, 0);
+    if (!USELONGJUMP && er) return;
+  }
 
-/* LN n    0Annnn  Push Literal Number.                               */
-/*                 This adds the following two bytes to the           */
-/* computational stack, as a 16-bit number. Stack overflow results in */
-/* an error stop. Numbers are assumed to be Big-Endian.               */
-      case 10:
-        PushExInt(Peek2(ILPC++));              /* get next 2 IL bytes */
-        ILPC++;
-        break;
+  /* something went wrong */
+  if (a == 0) {
+    error(EVARIABLE);
+    return;
+  }
 
-/* DS      0B      Duplicate Top Number (two bytes) on Stack.         */
-/*                 An error stop will occur if there are less than 2  */
-/* bytes (1 int) on the expression stack or if the stack overflows.   */
-      case 11:
-        op = ExpnTop;
-        ix = PopExInt();
-        if (ILPC == 0) break;                            /* underflow */
-        ExpnTop = op;
-        PushExInt(ix);
-        break;
+  /* set the value */
+  setnumber(a, memwrite2, v);
+#else
+  /* the static variable array */
+  if (name->c[1] == 0 && name->c[0] >= 65 && name->c[0] <= 91) {
+    vars[name->c[0] - 65] = v;
+    return;
+  }
+  error(EVARIABLE);
+#endif
+}
 
-/* SP      0C      Stack Pop.                                         */
-/*                 The top two bytes are removed from the expression  */
-/* stack and discarded. Underflow results in an error stop.           */
-      case 12:
-        ix = PopExInt();
-          if (Debugging>0) ShowExSt();
-        break;
+/* clr all variables */
+void clrvars() {
 
-/* SB      10      Save BASIC Pointer.                                */
-/*                 If BASIC pointer is pointing into the input line   */
-/* buffer, it is copied to the Saved Pointer; otherwise the two       */
-/* pointers are exchanged.                                            */
-      case 16:
-        LineSwap(BP);
-        break;
+  /* delete all static variables */
+  address_t i;
 
-/* RB      11      Restore BASIC Pointer.                             */
-/*                 If the Saved Pointer points into the input line    */
-/* buffer, it is replaced by the value in the BASIC pointer;          */
-/* otherwise the two pointers are exchanged.                          */
-      case 17:
-        LineSwap(SvPt);
-        break;
+  /* clear static variable (only on no heap systems) */
+#ifndef HASAPPLE1
+  for (i = 0; i < VARSIZE; i++) vars[i] = 0;
+#endif
 
-/* FV      12      Fetch Variable.                                    */
-/*                 The top byte of the computational stack is used to */
-/* index into Page 00. It is replaced by the two bytes fetched. Error */
-/* stops occur with stack overflow or underflow.                      */
-      case 18:
-        op = PopExBy();
-        if (ILPC != 0) PushExInt(Peek2(op));
-          if (Debugging>1) ShowVars(op);
-        break;
+  /* then set the entire mem area to zero */
+  for (i = himem; i < memsize; i++) memwrite2(i, 0);
 
-/* SV      13      Store Variable.                                    */
-/*                 The top two bytes of the computational stack are   */
-/* stored into memory at the Page 00 address specified by the third   */
-/* byte on the stack. All three bytes are deleted from the stack.     */
-/* Underflow results in an error stop.                                */
-      case 19:
-        ix = PopExInt();
-        op = PopExBy();
-        if (ILPC == 0) break;
-        Poke2(op,ix);
-          if (DEBUGON>0) LogIt((ix&0xFFFF)+((op-256)<<16));
-          if (Debugging>0) {ShowVars(op); if (Debugging>1) ShowExSt();}
-        break;
+  /* reset the heap start*/
+  himem = memsize;
 
-/* GS      14      GOSUB Save.                                        */
-/*                 The current BASIC line number is pushed            */
-/* onto the BASIC region of the control stack. It is essential that   */
-/* the IL stack be empty for this to work properly but no check is    */
-/* made for that condition. An error stop occurs on stack overflow.   */
-      case 20:
-        PushSub(Lino);                   /* push line # (possibly =0) */
-        break;
+  /* and clear the cache */
+#ifdef HASAPPLE1
+  zeroheap(&bfind_object);
+#endif
+}
 
-/* RS      15      Restore Saved Line.                                */
-/*                 Pop the top two bytes off the BASIC region of the  */
-/* control stack, making them the current line number. Set the BASIC  */
-/* pointer at the beginning of that line. Note that this is the line  */
-/* containing the GOSUB which caused the line number to be saved. As  */
-/* with the GS opcode, it is essential that the IL region of the      */
-/* control stack be empty. If the line number popped off the stack    */
-/* does not correspond to a line in the BASIC program an error stop   */
-/* occurs. An error stop also results from stack underflow.           */
-      case 21:
-        Lino = PopSub();         /* get line # (possibly =0) from pop */
-        if (ILPC != 0) GoToLino() ;             /* stops run if error */
-        break;
+/*
+   The BASIC memory access function.
 
-/* GO      16      GOTO.                                              */
-/*                 Make current the BASIC line whose line number is   */
-/* equal to the value of the top two bytes in the expression stack.   */
-/* That is, the top two bytes are popped off the computational stack, */
-/* and the BASIC program is searched until a matching line number is  */
-/* found. The BASIC pointer is then positioned at the beginning of    */
-/* that line and the RUN mode flag is turned on. Stack underflow and  */
-/* non-existent BASIC line result in error stops.                     */
-      case 22:
-        ILPC = XQhere;                /* the IL assumes an implied NX */
-        if (DEBUGON>0) LogIt(-ILPC);
-        Lino = PopExInt();
-        if (ILPC != 0) GoToLino() ;             /* stops run if error */
-        break;
+   getnumber2, getaddress and getstrlength are purely local, they
+   can be used with any memory reader function unlike the old BASIC 1
+   code.
+*/
 
-/* NE      17      Negate (two's complement).                         */
-/*                 The number in the top two bytes of the expression  */
-/* stack is replaced with its negative.                               */
-      case 23:
-        ix = PopExInt();
-        if (ILPC != 0) PushExInt(-ix);
-        break;
+/*
+   To avoid nasty warnings we encapsulate the EEPROM access functions
+ 	 from runtime.c
+   This is only needed for the get* and set* functions as we use the
+   memreader_t and memwriter_t function pointers here.
+   This way, types in runtime.c can be changed without changing the
+   BASIC interpreter code.
+*/
+mem_t beread(address_t a) {
+  return eread(a);
+}
 
-/* AD      18      Add.                                               */
-/*                 Add the two numbers represented by the top four    */
-/* bytes of the expression stack, and replace them with the two-byte  */
-/* sum. Stack underflow results in an error stop.                     */
-      case 24:
-        ix = PopExInt();
-        op = PopExInt();
-        if (ILPC != 0) PushExInt(op+ix);
-        break;
+void beupdate(address_t a, mem_t v) {
+  eupdate(a, v);
+}
 
-/* SU      19      Subtract.                                          */
-/*                 Subtract the two-byte number on the top of the     */
-/* expression stack from the next two bytes and replace the 4 bytes   */
-/* with the two-byte difference.                                      */
-      case 25:
-        ix = PopExInt();
-        op = PopExInt();
-        if (ILPC != 0) PushExInt(op-ix);
-        break;
 
-/* MP      1A      Multiply.                                          */
-/*                 Multiply the two numbers represented by the top 4  */
-/* bytes of the computational stack, and replace them with the least  */
-/* significant 16 bits of the product. Stack underflow is possible.   */
-      case 26:
-        ix = PopExInt();
-        op = PopExInt();
-        if (ILPC != 0) PushExInt(op*ix);
-        break;
+/* a generic memory reader for numbers  */
+number_t getnumber(address_t m, memreader_t f) {
+  mem_t i;
+  accu_t z;
 
-/* DV      1B      Divide.                                            */
-/*                 Divide the number represented by the top two bytes */
-/* of the computational stack into that represented by the next two.  */
-/* Replace the 4 bytes with the quotient and discard the remainder.   */
-/* This is a signed (two's complement) integer divide, resulting in a */
-/* signed integer quotient. Stack underflow or attempted division by  */
-/* zero result in an error stop. */
-      case 27:
-        ix = PopExInt();
-        op = PopExInt();
-        if (ix == 0) TBerror(13);                      /* divide by 0.. */
-        else if (ILPC != 0) PushExInt(op/ix);
-        break;
+  for (i = 0; i < numsize; i++) z.c[i] = f(m++);
+  return z.n;
+}
 
-/* CP      1C      Compare.                                           */
-/*                 The number in the top two bytes of the expression  */
-/* stack is compared to (subtracted from) the number in the 4th and   */
-/* fifth bytes of the stack, and the result is determined to be       */
-/* Greater, Equal, or Less. The low three bits of the third byte mask */
-/* a conditional skip in the IL program to test these conditions; if  */
-/* the result corresponds to a one bit, the next byte of the IL code  */
-/* is skipped and not executed. The three bits correspond to the      */
-/* conditions as follows:                                             */
-/*         bit 0   Result is Less                                     */
-/*         bit 1   Result is Equal                                    */
-/*         bit 2   Result is Greater                                  */
-/* Whether the skip is taken or not, all five bytes are deleted from  */
-/* the stack. This is a signed (two's complement) comparison so that  */
-/* any positive number is greater than any negative number. Multiple  */
-/* conditions, such as greater-than-or-equal or unequal (i.e.greater- */
-/* than-or-less-than), may be tested by forming the condition mask    */
-/* byte of the sum of the respective bits. In particular, a mask byte */
-/* of 7 will force an unconditional skip and a mask byte of 0 will    */
-/* force no skip. The other 5 bits of the control byte are ignored.   */
-/* Stack underflow results in an error stop.                          */
-      case 28:
-        ix = PopExInt();
-        op = PopExBy();
-        ix = PopExInt()-ix;                         /* <0 or =0 or >0 */
-        if (ILPC == 0) return;                         /* underflow.. */
-        if (ix<0) ix = 1;
-        else if (ix>0) ix = 4;              /* choose the bit to test */
-          else ix = 2;
-        if ((ix&op)>0) ILPC++;           /* skip next IL op if bit =1 */
-          if (Debugging>0) ShowExSt();
-        break;
+/* same for addresses */
+address_t getaddress(address_t m, memreader_t f) {
+  mem_t i;
+  accu_t z;
 
-/* NX      1D      Next BASIC Statement.                              */
-/*                 Advance to next line in the BASIC program, if in   */
-/* RUN mode, or restart the IL program if in the command mode. The    */
-/* remainder of the current line is ignored. In the Run mode if there */
-/* is another line it becomes current with the pointer positioned at  */
-/* its beginning. At this time, if the Break condition returns true,  */
-/* execution is aborted and the IL program is restarted after         */
-/* printing an error message. Otherwise IL execution proceeds from    */
-/* the saved IL address (see the XQ instruction). If there are no     */
-/* more BASIC statements in the program an error stop occurs.         */
-      case 29:
-        if (Lino == 0) ILPC = 0;
-        else {
-          BP = SkipTo(BP, '\r');          /* skip to end of this line */
-          Lino = Peek2(BP++);                           /* get line # */
-          if (Lino==0) {                           /* ran off the end */
-            TBerror(14);
-            break;}
-          else BP++;
-          ILPC = XQhere;          /* restart at saved IL address (XQ) */
-          if (DEBUGON>0) LogIt(-ILPC);}
-        if (DEBUGON>0) LogIt(Lino);
-        if (Debugging>0) {OutStr(" [#"); OutInt(Lino); OutStr("]");}
-        break;
+  for (i = 0; i < addrsize; i++) z.c[i] = f(m++);
+  return z.a;
+}
 
-/* LS      1F      List The Program.                                  */
-/*                 The expression stack is assumed to have two 2-byte */
-/* numbers. The top number is the line number of the last line to be  */
-/* listed, and the next is the line number of the first line to be    */
-/* listed. If the specified line numbers do not exist in the program, */
-/* the next available line (i.e. with the next higher line number) is */
-/* assumed instead in each case. If the last line to be listed comes  */
-/* before the first, no lines are listed. If Break condition comes    */
-/* true during a List operation, the remainder of the listing is      */
-/* aborted. Zero is not a valid line number, and an error stop occurs */
-/* if either line number specification is zero. The line number       */
-/* specifications are deleted from the stack.                         */
-      case 31:
-        op = 0;
-        ix = 0;          /* The IL seems to assume we can handle zero */
-        while (ExpnTop<ExpnStk) {   /* or more numbers, so get them.. */
-          op = ix;
-          ix = PopExInt();}       /* get final line #, then initial.. */
-        if (op<0 || ix<0) TBerror(15);
-          else ListIt(ix,op);
-        break;
+/* same for strings  */
+stringlength_t getstrlength(address_t m, memreader_t f) {
+  mem_t i;
+  accu_t z;
 
-/* PN      20      Print Number.                                      */
-/*                 The number represented by the top two bytes of the */
-/* expression stack is printed in decimal with leading zero           */
-/* suppression. If it is negative, it is preceded by a minus sign     */
-/* and the magnitude is printed. Stack underflow is possible.         */
-      case 32:
-        ix = PopExInt();
-        if (ILPC != 0) OutInt(ix);
-        break;
+  z.a = 0;
+  for (i = 0; i < strindexsize; i++) z.c[i] = f(m++);
+  return z.a;
+}
 
-/* PQ      21      Print BASIC String.                                */
-/*                 The ASCII characters beginning with the current    */
-/* position of BASIC pointer are printed on the console. The string   */
-/* to be printed is terminated by quotation mark ("), and the BASIC   */
-/* pointer is left at the character following the terminal quote. An  */
-/* error stop occurs if a carriage return is imbedded in the string.  */
-      case 33:
-        while (true) {
-          ch = (char)Core[BP++];
-          if (ch=='\"') break;                 /* done on final quote */
-          if (ch<' ') {      /* error if return or other control char */
-            TBerror(16);
-            break;}
-          Ouch(ch);}                                      /* print it */
-        break;
+/* set a number at a memory location, new version */
+void setnumber(address_t m, memwriter_t f, number_t v) {
+  mem_t i;
+  accu_t z;
 
-/* PT      22      Print Tab.                                         */
-/*                 Print one or more spaces on the console, ending at */
-/* the next multiple of eight character positions (from the left      */
-/* margin).                                                           */
-      case 34:
-        do {Ouch(' ');} while (Core[TabHere]%8>0);
-        break;
+  z.n = v;
+  for (i = 0; i < numsize; i++) f(m++, z.c[i]);
+}
 
-/* NL      23      New Line.                                          */
-/*                 Output a carriage-return-linefeed sequence to the  */
-/* console.                                                           */
-      case 35:
-        Ouch('\r');
-        break;
+/* set an address at a memory location */
+void setaddress(address_t m, memwriter_t f, address_t a) {
+  mem_t i;
+  accu_t z;
 
-/* PC "xxxx"  24xxxxxxXx   Print Literal String.                      */
-/*                         The ASCII string follows opcode and its    */
-/* last byte has the most significant bit set to one.                 */
-      case 36:
-        do {
-          ix = (int)Core[ILPC++];
-          Ouch((char)(ix&127));          /* strip high bit for output */
-          } while ((ix&128)==0);
-        break;
+  z.a = a;
+  for (i = 0; i < addrsize; i++) f(m++, z.c[i]);
+}
 
-/* GL      27      Get Input Line.                                    */
-/*                 ASCII characters are accepted from console input   */
-/* to fill the line buffer. If the line length exceeds the available  */
-/* space, the excess characters are ignored and bell characters are   */
-/* output. The line is terminated by a carriage return. On completing */
-/* one line of input, the BASIC pointer is set to point to the first  */
-/* character in the input line buffer, and a carriage-return-linefeed */
-/* sequence is [not] output.                                          */
-      case 39:
-        ILPC--;
-        if(lastLineEnded){
-          InLend = InLine;
-          lastLineEnded = false;
+/* set a stringlength at a memory location */
+void setstrlength(address_t m, memwriter_t f, stringlength_t s) {
+  mem_t i;
+  accu_t z;
+
+  z.s = s;
+  for (i = 0; i < strindexsize; i++) f(m++, z.c[i]);
+}
+
+/*
+   Code to handle names. These function mostly deal with the true
+   name part of name_t and not the token. The token has to be
+   processed by the caller. Name byte order conventon is
+   to have the first character in the lower byte and the second
+   character in the higher byte. Optionally, for HASLONGNAMES
+   the length of the name is stored before the name.
+
+   setname_* sets a name and advance the number of bytes the name uses.
+   Two versions are needed because the heap is counted down
+   while the pgm is counted up.
+
+   getname needs to go through a memreader because names are
+   read from eeproms as well!
+
+   Currently the old code with twobyte names is still in place
+   if HASLONGNAMES is not defined. Default is now to have long names.
+
+*/
+#ifndef HASLONGNAMES
+
+/* this one is for the heap were we count down writing*/
+address_t setname_heap(address_t m, name_t* name) {
+  memwrite2(m--, name->c[1]);
+  memwrite2(m--, name->c[0]);
+  return m;
+}
+
+/* this one is for the pgm were we count up writing */
+address_t setname_pgm(address_t m, name_t* name) {
+  memwrite2(m++, name->c[0]);
+  memwrite2(m++, name->c[1]);
+  return m;
+}
+
+/* get a name from a memory location */
+address_t getname(address_t m, name_t* name, memreader_t f) {
+  name->c[0] = f(m++);
+  name->c[1] = f(m++);
+  return m;
+}
+
+/* compare two names */
+mem_t cmpname(name_t* a, name_t* b) {
+  if (a->c[0] == b->c[0] && a->c[1] == b->c[1]) return 1; else return 0;
+}
+
+/* copy the entire name stucture */
+void copyname(name_t* a, name_t* b) {
+  a->c[0] = b->c[0];
+  a->c[1] = b->c[1];
+  a->token = b->token;
+}
+
+/* zero a name and a heap object */
+void zeroname(name_t* name) {
+  name->c[0] = 0;
+  name->c[1] = 0;
+  name->token = 0;
+}
+
+void zeroheap(heap_t* heap) {
+  heap->address = 0;
+  heap->size = 0;
+  zeroname(&heap->name);
+}
+
+/* output a name */
+void outname(name_t* name) {
+  outch(name->c[0]);
+  if (name->c[1]) outch(name->c[1]);
+}
+
+#else
+/* this one is for the heap were we count down writing*/
+address_t setname_heap(address_t m, name_t* name) {
+  mem_t l;
+  for (l = name->l; l > 0; l--) memwrite2(m--, name->c[l - 1]);
+  memwrite2(m--, name->l);
+  return m;
+}
+
+/* this one is for the pgm were we count up writing */
+address_t setname_pgm(address_t m, name_t* name) {
+  mem_t l;
+  memwrite2(m++, name->l);
+  for (l = 0; l < name->l; l++) memwrite2(m++, name->c[l]);
+  return m;
+}
+
+/* get a name from a memory location */
+address_t getname(address_t m, name_t* name, memreader_t f) {
+  mem_t l;
+  name->l = f(m++);
+
+  for (l = 0; l < name->l; l++) name->c[l] = f(m++);
+  // for(; l<MAXNAME; l++) name->c[l]=0; /* should not be there, is needed for */
+  /*	not having this here causes the obscure function namehandling bug if xfn does not do a zeroname
+  	have not yet found the root cause for this */
+  return m;
+}
+
+/* compare two names */
+mem_t cmpname(name_t* a, name_t* b) {
+  mem_t l;
+  if (a->l != b->l) return 0;
+  for (l = 0; l < a->l; l++) if (a->c[l] != b->c[l]) return 0;
+  return 1;
+}
+
+/* copy the entire name stucture */
+void copyname(name_t* a, name_t* b) {
+  mem_t l;
+  a->l = b->l;
+  for (l = 0; l < b->l; l++) a->c[l] = b->c[l];
+  a->token = b->token;
+  if (a->l == 1) a->c[1] = 0; /* this is needed for compatibility with the short name code when handling special vars */
+}
+
+/* zero a name and a heap object */
+void zeroname(name_t* name) {
+  mem_t l;
+  name->l = 0;
+  for (l = 0; l < MAXNAME; l++) name->c[l] = 0;
+  name->token = 0;
+}
+
+void zeroheap(heap_t* heap) {
+  heap->address = 0;
+  heap->size = 0;
+  zeroname(&heap->name);
+}
+
+/* output a name */
+void outname(name_t* name) {
+  mem_t l;
+  for (l = 0; l < name->l; l++) outch(name->c[l]);
+}
+#endif
+
+
+/*
+   Create an array.
+
+   Arrays are created on the heap. This code allows redimensioning of arrays
+   which leads to a new array with the same name on the heap. This new
+   array is found first in a heap search. This ways we can have arrays
+   as local variables.
+
+   msarraylimits is a flag to indicate that arrays should be created with
+   0-n elements like in Microsoft BASIC.
+
+*/
+address_t createarray(name_t* variable, address_t i, address_t j) {
+
+  /* if we want to me MS compatible, the array ranges from 0-n */
+  if (msarraylimits) {
+    i += 1;
+    j += 1;
+  }
+
+  /* this code allows redimension now for local variables */
+#ifdef HASAPPLE1
+  if (DEBUG) {
+    outsc("* create array "); outname(variable); outspc();
+    outsc("* with name length "); outnumber(variable->l); outspc();
+    outnumber(i); outspc(); outnumber(j); outcr();
+  }
+
+#ifndef HASMULTIDIM
+  return bmalloc(variable, i);
+#else
+
+  /* allocate the array space */
+  address_t a = bmalloc(variable, i * j);
+
+  /* store the dimension of the array at the beginning of the array area */
+  setaddress(a + i * j * numsize, memwrite2, j);
+
+  /* return value is the address of the payload area */
+  return a;
+#endif
+#endif
+  return 0;
+}
+
+/*
+   The array function.
+
+   We use the lefthandside object here with the convention that i is the first index
+   and j the second index. This is inconsistent with the use in strings. Will be fixed
+   when a true indexing type is introduced.
+*/
+void array(lhsobject_t* object, mem_t getset, number_t* value) {
+  address_t a; /* the address of the array element */
+  address_t h; /* the number of elements in the array */
+  address_t l = arraylimit; /* the lower limit, defaults to the arraylimit, here for further use */
+  address_t dim = 1; /* the array dimension */
+
+  if (DEBUG) {
+    outsc("* array: accessing ");
+    outname(&name); outspc(); outspc();
+    outnumber(object->i); outspc();
+    outnumber(object->j); outspc();
+    outsc(" getset "); outch(getset); outcr();
+  }
+
+  /* handling the special array, range check and access is done here */
+  if (object->name.c[0] == '@') {
+    switch (object->name.c[1]) {
+      /* @E ranges from 1 to the end of the EEPROM minus the header */
+      case 'E':
+        h = elength() / numsize;
+        a = elength() - numsize * object->i;
+        if (a < eheadersize || a > elength() - numsize) {
+          error(EORANGE);
+          return;
         }
-        ch = Inch();                 /* read input line characters... */
-        if (ch == '\0') {
-          break;                                    /* No key pressed */
-        } else if (ch=='\r') {                     /* end of the line */
-          while (InLend>InLine && Core[InLend-1] == ' ')
-            InLend--;                /* delete excess trailing spaces */
-          Core[InLend++] = (aByte) '\r';/* insert final return & null */
-          Core[InLend] = 0;
-          BP = InLine;
-          lastLineEnded = true;
-          ILPC++;
+        if (getset == 'g') *value = getnumber(a, beread);
+        else if (getset == 's') setnumber(a, beupdate, *value);
+        return;
+#if defined(DISPLAYDRIVER) && defined(DISPLAYCANSCROLL)
+      case 'D':
+        if (getset == 'g') *value = dspget(object->i - 1);
+        else if (getset == 's') dspset(object->i - 1, *value);
+        return;
+#endif
+#if defined(HASCLOCK)
+      case 'T':
+        if (getset == 'g') *value = rtcget(object->i);
+        else if (getset == 's') rtcset(object->i, *value);
+        return;
+#endif
+#if defined(ARDUINO) && defined(ARDUINOSENSORS)
+      case 'S':
+        if (getset == 'g') *value = sensorread(object->i, 0);
+        return;
+#endif
+#ifdef HASSTEFANSEXT
+      case 'U':
+        if (getset == 'g') *value = getusrarray(object->i);
+        else if (getset == 's') setusrarray(object->i, *value);
+        return;
+#endif
+      case 0:
+        h = (himem - top) / numsize;
+        a = himem - numsize * (object->i + 1) + 1;
+        if (object->i < 0 || a < top) {
+          error(EORANGE);
+          return;
+        }
+        if (getset == 'g') *value = getnumber(a, memread2);
+        else if (getset == 's') setnumber(a, memwrite2, *value);
+        return;
+#ifdef HASSTEFANSEXT
+      case 'M':
+        h = himem - top;
+        a = himem - object->i;
+        if (object->i < 0 || a < top) {
+          error(EORANGE);
+          return;
+        }
+        if (getset == 'g') *value = memread2(a);
+        else if (getset == 's') memwrite2(a, *value);
+        return;
+#endif
+      case 'P':
+        /* the io ports */
+        if (object->i >= 0 && object->i < 16) {
+          if (getset == 'g') *value = portread(object->i);
+          else if (getset == 's') portwrite(object->i, *value);
+          return;
+        }
+        /* the data direction registers */
+        if (object->i >= 16 && object->i < 32) {
+          if (getset == 'g') *value = ddrread(object->i - 16);
+          else if (getset == 's') ddrwrite(object->i - 16, *value);
+          return;
+        }
+        /* the pin registers (only input) */
+        if (object->i >= 32 && object->i < 48) {
+          if (getset == 'g') *value = pinread(object->i - 32);
+          return;
+        }
+      default:
+        error(EVARIABLE);
+        return;
+    }
+  } else {
+    /* dynamically allocated arrays */
+#ifdef HASAPPLE1
+    object->name.token = ARRAYVAR;
+    if (!(a = bfind(&object->name))) a = createarray(&object->name, ARRAYSIZEDEF, 1);
+    if (!USELONGJUMP && er) return;
+
+    /* multidim reserves one address word for the dimension, hence we have less bytes */
+#ifndef HASMULTIDIM
+    h = bfind_object.size / numsize;
+#else
+    h = (bfind_object.size - addrsize) / numsize;
+#endif
+
+    if (DEBUG) {
+      outsc("** in array dynamical base address "); outnumber(a);
+      outsc("    and array element number "); outnumber(h);
+      outcr();
+    }
+
+#ifdef HASMULTIDIM
+    dim = getaddress(a + bfind_object.size - addrsize, memread2);
+    if (DEBUG) {
+      outsc("** in array, second dimension is "); outnumber(dim);
+      outspc(); outnumber(a + bfind_object.size);
+      outcr();
+    }
+    a = a + ((object->i - l) * dim + (object->j - l)) * numsize;
+#else
+    a = a + (object->i - l) * numsize;
+#endif
+#else /* no array code */
+    error(EVARIABLE);
+    return;
+#endif
+  }
+
+  /* range check */
+#ifdef HASMULTIDIM
+  if ( (object->j < l) || (object->j >= dim + l) || (object->i < l) || (object->i >= h / dim + l)) {
+    error(EORANGE);
+    return;
+  }
+#else
+  if ( (object->i < l) || (object->i >= h + l) ) {
+    error(EORANGE);
+    return;
+  }
+#endif
+
+  /* set or get the array */
+  if (getset == 'g') *value = getnumber(a, memread2);
+  else if (getset == 's') setnumber(a, memwrite2, *value);
+}
+
+/*
+   Create a string on the heap.
+
+   i is the length of the string, j the dimension of the array.
+
+   String objects are either plain strings or arrays. In case of arrays
+   the number of strings is stored at the end of the array.
+*/
+address_t createstring(name_t* variable, address_t i, address_t j) {
+#ifdef HASAPPLE1
+  address_t a;
+
+  if (DEBUG) {
+    outsc("Create string ");
+    outname(variable);
+    outcr();
+  }
+
+  /* correct create length if arraylimit is not 1 */
+  j = (j - arraylimit) + 1;
+
+  /* the MS string compatibility, DIM 10 creates 11 elements */
+  if (msarraylimits) j += 1;
+
+#ifndef HASMULTIDIM
+  /* if no string arrays are in the code, we reserve the number of bytes i and space for the index */
+  /* allow redimension without check right now, for local variables */
+  a = bmalloc(variable, i + strindexsize);
+  if (er != 0) return 0;
+  return a;
+#else
+  /* string arrays need the number of array elements which address_ hence addresize bytes and then
+  		the space for j strings */
+  /* allow redimension without check right now, for local variables */
+  a = bmalloc(variable, addrsize + j * (i + strindexsize));
+  if (er != 0) return 0;
+
+  /* set the array length */
+  setaddress(a + j * (i + strindexsize), memwrite2, j);
+
+  /* return the address of the first string */
+  return a;
+#endif
+  if (er != 0) return 0;
+  return a;
+#else
+  return 0;
+#endif
+}
+
+
+/*
+   Get a string at position b.
+
+   getstring returns a pointer to the first string element in question.
+
+   There is a lo tof complexity in the code to support systems with serial
+   memory.
+
+*/
+#ifdef HASAPPLE1
+
+/* helpers to handle strings */
+/* Stores a C string to a BASIC string variable */
+void storecstring(address_t ax, address_t s, char* b) {
+  address_t k;
+
+  for (k = 0; k < s - strindexsize && b[k] != 0; k++) memwrite2(ax + k + strindexsize, b[k]);
+  setstrlength(ax, memwrite2, k);
+}
+
+/* length of a c string up to a limit l */
+address_t cstringlength(char* c, address_t l) {
+  address_t a;
+
+  while (a < l && c[a] != 0) a++;
+  return a;
+}
+
+/* get a memory pointer to a string, new version */
+void getstring(string_t* strp, name_t* name, address_t b, address_t j) {
+  address_t k, zt;
+  address_t ax;
+
+  /* we know nothing about the string */
+  ax = 0;
+  strp->address = 0;
+  strp->ir = 0;
+  strp->length = 0;
+  strp->arraydim = 1;
+  strp->strdim = 0;
+
+  if (DEBUG) {
+    outsc("* getstring from var "); outname(name); outspc();
+    outnumber(b); outspc();
+    outnumber(j); outcr();
+  }
+
+  /* special string variables */
+  if (name->c[0] == '@')
+    switch (name->c[1]) {
+      case 0:
+        strp->ir = ibuffer + b;
+        strp->length = ibuffer[0];
+        strp->strdim = BUFSIZ - 2;
+        return;
+      default:
+        error(EVARIABLE);
+        return;
+      case 'U':
+        makeusrstring(); /* a user definable special string in sbuffer */
+        strp->ir = sbuffer + b;
+        strp->length = sbuffer[0];
+        return;
+#ifdef HASCLOCK
+      case 'T':
+        rtcmkstr(); /* the time string */
+        strp->ir = rtcstring + b;
+        strp->length = rtcstring[0];
+        return;
+#endif
+        /* the arguments string on POSIX systems */
+#ifdef HASARGS
+      case 'A':
+        if (bargc > 2) {
+          strp->ir = bargv[2];
+          strp->length = cstringlength(bargv[2], BUFSIZE);
+          return;
+        }
+        return;
+#endif
+    }
+
+  /* dynamically allocated strings, create on the fly */
+  if (!(ax = bfind(name))) ax = createstring(name, defaultstrdim, arraylimit);
+
+  if (DEBUG) {
+    outsc("** heap address "); outnumber(ax); outcr();
+    if (ax) {
+      outsc("** byte length of string memory segment ");
+      outnumber(bfind_object.size);
+      outcr();
+    }
+  }
+
+  /* string creating has caused an error, typically no memoryy */
+  if (!USELONGJUMP && er) return;
+
+#ifndef HASMULTIDIM
+  /* the maximum length of the string */
+  strp->strdim = bfind_object.size - strindexsize;
+
+  /* are we in range */
+  if ((b < 1) || (b > strp->strdim )) {
+    error(EORANGE);
+    return;
+  }
+
+  if (DEBUG) {
+    outsc("** maximum string length ");
+    outnumber(strp->strdim);
+    outcr();
+  }
+
+  /* get the actual full length, this is redundant to lenstring but lenstring does
+  	not autocreate */
+  strp->length = getstrlength(ax, memread2);
+
+  /* now find the payload address */
+  ax = ax + strindexsize + (b - 1);
+#else
+
+  /* the dimension of the string array */
+  /* it is at the top of the string, this uses a side effect of bfind */
+  strp->arraydim = getaddress(ax + bfind_object.size - addrsize, memread2);
+
+  /* is the array index in range */
+  if ((j < arraylimit) || (j >= strp->arraydim + arraylimit )) {
+    error(EORANGE);
+    return;
+  }
+
+  if (DEBUG) {
+    outsc("** string dimension ");
+    outnumber(strp->arraydim);
+    outcr();
+  }
+
+  /* the max length of a string */
+  strp->strdim = (bfind_object.size - addrsize) / strp->arraydim - strindexsize;
+
+  /* are we in range  */
+  if ((b < 1) || (b > strp->strdim )) {
+    error(EORANGE);
+    return;
+  }
+
+  if (DEBUG) {
+    outsc("** maximum string length ");
+    outnumber(strp->strdim);
+    outcr();
+  }
+
+  /* the base address of a string */
+  ax = ax + (j - arraylimit) * (strp->strdim + strindexsize);
+
+  if (DEBUG) {
+    outsc("** string base address ");
+    outnumber(ax);
+    outcr();
+  }
+
+  /* from this base address we can get the actual length of the string */
+  strp->length = getstrlength(ax, memread2);
+
+  /* the address of the payload */
+  ax = ax + b - 1 + strindexsize;
+
+#endif
+
+  if (DEBUG) {
+    outsc("** payload address ");
+    outnumber(ax);
+    outcr();
+  }
+
+  /* store the payload address to the string object, length to be done if needed!! */
+  strp->address = ax;
+
+  /* return value is 0 if we have no direct memory access, the caller needs to handle the string
+  	through the mem address */
+#ifdef USEMEMINTERFACE
+  strp->ir = 0;
+#else
+  strp->ir = (char *)&mem[ax];
+#endif
+}
+
+
+/* reimplementation with name_t */
+/* set the length of a string */
+void setstringlength(name_t* name, address_t l, address_t j) {
+  address_t a;
+  stringlength_t stringdim;
+
+  if (DEBUG) {
+    outsc("** setstringlength ");
+    outname(name);
+    outspc(); outnumber(l); outspc(); outnumber(j);
+    outcr();
+  }
+
+  /* the special strings */
+  if (name->c[0] == '@')
+    switch (name->c[1]) {
+      case 0:
+        *ibuffer = l;
+        return;
+      case 'U':
+        /* do nothing here for the moment */
+        return;
+    }
+
+  /* find the variable address */
+  a = bfind(name);
+  if (!USELONGJUMP && er) return;
+  if (a == 0) {
+    error(EVARIABLE);
+    return;
+  }
+
+  /* stringdim calculation moved here */
+#ifndef HASMULTIDIM
+  stringdim = bfind_object.size - strindexsize;
+#else
+  /* getaddress seeks the dimension of the string array directly after the payload */
+  stringdim = (bfind_object.size - addrsize) / (getaddress(a + bfind_object.size - addrsize, memread2)) - strindexsize;
+#endif
+
+  /* where do we write it to */
+  a = a + (stringdim + strindexsize) * (j - arraylimit);
+  if (DEBUG) {
+    outsc("**  setstringlength writing to ");
+    outnumber(a);
+    outsc(" value ");
+    outnumber(l);
+    outcr();
+  }
+  setstrlength(a, memwrite2, l);
+}
+
+/* the BASIC string mechanism for real time clocks, create a string with the clock data */
+#ifdef HASCLOCK
+void rtcmkstr() {
+  int cc = 1;
+  int t;
+
+  /* hours */
+  t = rtcget(2);
+  rtcstring[cc++] = t / 10 + '0';
+  rtcstring[cc++] = t % 10 + '0';
+  rtcstring[cc++] = ':';
+
+  /* minutes */
+  t = rtcget(1);
+  rtcstring[cc++] = t / 10 + '0';
+  rtcstring[cc++] = t % 10 + '0';
+  rtcstring[cc++] = ':';
+
+  /* seconds */
+  t = rtcget(0);
+  rtcstring[cc++] = t / 10 + '0';
+  rtcstring[cc++] = t % 10 + '0';
+  rtcstring[cc++] = '-';
+
+  /* days */
+  t = rtcget(4);
+  if (t / 10 > 0) rtcstring[cc++] = t / 10 + '0';
+  rtcstring[cc++] = t % 10 + '0';
+  rtcstring[cc++] = '/';
+
+  /* months */
+  t = rtcget(5);
+  if (t / 10 > 0) rtcstring[cc++] = t / 10 + '0';
+  rtcstring[cc++] = t % 10 + '0';
+  rtcstring[cc++] = '/';
+
+  /* years */
+  t = rtcget(6) % 100; /* only 100 years no 19xx epochs */
+  if (t / 10 > 0) rtcstring[cc++] = t / 10 + '0';
+  rtcstring[cc++] = t % 10 + '0';
+  rtcstring[cc] = 0;
+
+  /* needed for BASIC strings */
+  rtcstring[0] = cc - 1;
+}
+#endif
+#endif
+
+/*
+   Layer 0 Extension: the user defined extension functions, use this function for a
+   quick way to extend BASIC.
+
+   @U is a single variable that can be set and get. Every access to this variable
+  	calls getusrvar() or setusrvar().
+   @U() is a 1d array every access calls get or setusrarray().
+   @U$ is a read only string created by makeusrstring().
+   USR(32, V) is a user defined function created by usrfunction().
+   CALL 32 is a user defined call
+
+*/
+
+/* read or write the variable @U, you can do anything you want here */
+number_t getusrvar() {
+  return 0;
+}
+void setusrvar(number_t v) {
+  return;
+}
+
+/* read or write the array @U(), you can do anything you want here */
+number_t getusrarray(address_t i) {
+  return 0;
+}
+void setusrarray(address_t i, number_t v) {
+  return;
+}
+
+/* make the usr string from @U$, this function can be called multiple times for one operation */
+void makeusrstring() {
+  /*
+     sample code could be:
+
+   	mem_t i;
+   	const char text[] = "hello world";
+   	for(i=0; i<SBUFSIZE-1 && text[i]!=0 ; i++) sbuffer[i]=text[i];
+
+     Always set sbuffer[0] to the string length, keep in mind that sbuffer
+     is 32 bytes long by default
+  */
+  sbuffer[0] = 0;
+}
+
+/* USR with arguments > 31 calls this */
+number_t usrfunction(address_t i, number_t v) {
+  return 0;
+}
+
+/* CALL with arguments > 31 calls this */
+void usrcall(address_t i) {
+  return;
+}
+
+/*
+    Layer 0 - keyword handling - PROGMEM logic goes here
+ 		getkeyword(), getmessage(), and getokenvalue() are
+ 		the only access to the keyword array in the code.
+
+ 	Same for messages and errors.
+
+  	All keywords are stored in PROGMEM, the Arduino way to store
+  	constant data in flash memory. sbuffer is used to recall the
+    keywords and messages from PROGMEM on Arduino. Other systems
+    use the keyword array directly.
+*/
+char* getkeyword(address_t i) {
+
+  if (DEBUG) {
+    outsc("** getkeyword from index ");
+    outnumber(i);
+    outcr();
+  }
+
+#ifndef ARDUINOPROGMEM
+  return (char *) keyword[i];
+#else
+  strcpy_P(sbuffer, (char*) pgm_read_ptr(&(keyword[i])));
+  return sbuffer;
+#endif
+}
+
+/* messages are read from the message array */
+char* getmessage(char i) {
+  if (i >= sizeof(message) || i < 0) return 0;
+#ifndef ARDUINOPROGMEM
+  return (char *) message[i];
+#else
+  strcpy_P(sbuffer, (char*) pgm_read_ptr(&(message[i])));
+  return sbuffer;
+#endif
+}
+
+/* tokens read here are token_t constructed from multi byte sequences */
+token_t gettokenvalue(address_t i) {
+  if (i >= sizeof(tokens)) return 0;
+#ifndef ARDUINOPROGMEM
+  return tokens[i];
+#else
+#ifndef HASLONGTOKENS
+  return (token_t) pgm_read_byte(&tokens[i]);
+#else
+  return (token_t) pgm_read_word(&tokens[i]);
+#endif
+#endif
+}
+
+/* print a message directly to the default outpur stream */
+void printmessage(char i) {
+#ifndef HASERRORMSG
+  if (i > EGENERAL) return;
+#endif
+  outsc((char *)getmessage(i));
+}
+
+/*
+ 	Layer 0 - error handling
+
+   The general error handler. The static variable er
+   contains the error state.
+
+   debugtoken() writes a token for debug
+   bdebug() is the general debug message function
+
+   Strategy: the error() function writes the message and then
+   clears the stack. All calling functions must check er and
+   return after funtion calls with no further messages etc.
+   reseterror() sets the error state to normal and end the
+   run loop.
+*/
+void error(token_t e) {
+  address_t i;
+
+  /* store the error number */
+  er = e;
+
+  /* clear the stacks */
+  clearst();
+  clrforstack();
+  clrgosubstack();
+
+  /* switch off all timers and interrupts */
+#ifdef HASTIMER
+  resettimer(&after_timer);
+  resettimer(&every_timer);
+#endif
+
+  /* is the error handler active? then silently go if we do GOTO or CONT actions in it */
+#ifdef HASERRORHANDLING
+#if !USELONGJUMP
+  if (st != SINT && (berrorh.type == TGOTO || berrorh.type == TCONT)) return;
+#else
+  if (st != SINT && (berrorh.type == TGOTO || berrorh.type == TCONT)) longjmp(sthook, er);
+#endif
+#endif
+
+  /* set input and output device back to default, and delete the form */
+  iodefaults();
+  form = 0;
+
+  /* find the line number if in RUN modes */
+  if (st != SINT) {
+    outnumber(myline(here));
+    outch(':');
+    outspc();
+  }
+
+  /* if we have error messages, display them */
+#ifdef HASERRORMSG
+  if (e > 0)
+    printmessage(e);
+  else {
+    for (i = 0; gettokenvalue(i) != 0 && gettokenvalue(i) != e; i++);
+    outsc(getkeyword(i));
+  }
+  outspc();
+  printmessage(EGENERAL);
+#else
+  printmessage(EGENERAL);
+  outspc();
+  outnumber(er);
+#endif
+  if (DEBUG) {
+    outsc("** at ");
+    outnumber(here);
+  }
+  outcr();
+
+  /* reset fncontext - this is odd */
+  fncontext = 0;
+
+  /* we return to the statement loop, bringing the error with us */
+#if USELONGJUMP == 1
+  longjmp(sthook, er);
+#endif
+}
+
+void reseterror() {
+  er = 0;
+  here = 0;
+  st = SINT;
+}
+
+void debugtoken() {
+  outsc("* ");
+  if (debuglevel > 2) {
+    outnumber(here);
+    outsc(" * ");
+  }
+
+  if (token == EOL) {
+    outsc("EOL");
+    return;
+  }
+
+  switch (token) {
+    case LINENUMBER:
+      printmessage(MLINE);
+      break;
+    case NUMBER:
+      printmessage(MNUMBER);
+      break;
+    case VARIABLE:
+      printmessage(MVARIABLE);
+      break;
+    case ARRAYVAR:
+      printmessage(MARRAY);
+      break;
+    case STRING:
+      printmessage(MSTRING);
+      break;
+    case STRINGVAR:
+      printmessage(MSTRINGVAR);
+      break;
+  }
+
+  outspc();
+  outputtoken();
+}
+
+void bdebug(const char *c) {
+  outch('*');
+  outspc();
+  outsc(c);
+  debugtoken();
+  outcr();
+}
+
+/*
+ 	Arithmetic and runtime operations are mostly done
+ 	on a stack of number_t.
+
+ 	push(), pop(), clearst() handle the stack
+*/
+void push(number_t t) {
+
+  if (DEBUG) {
+    outsc("** push sp= "); outnumber(sp); outcr();
+    outsc("** push value= "); outnumber(t); outcr();
+  }
+
+  /* in forced integer mode every operation is truncated */
+#ifdef HASFLOAT
+  if (forceint) t = trunc(t);
+#endif
+
+  if (sp == STACKSIZE)
+    error(ESTACK);
+  else
+    stack[sp++].n = t;
+}
+
+number_t pop() {
+
+  if (DEBUG) {
+    outsc("** pop sp= "); outnumber(sp); outcr();
+    outsc("** pop value= "); outnumber(stack[sp - 1].n); outcr();
+  }
+
+  if (sp == 0) {
+    error(ESTACK);
+    return 0;
+  }
+
+  return stack[--sp].n;
+}
+
+void pushaddress2(address_t a) {
+
+  if (DEBUG) {
+    outsc("** push sp= "); outnumber(sp); outcr();
+    outsc("** push value= "); outnumber(a); outcr();
+  }
+
+  if (sp == STACKSIZE)
+    error(ESTACK);
+  else
+    stack[sp++].a = a;
+}
+
+address_t popaddress2() {
+
+  if (DEBUG) {
+    outsc("** pop sp= "); outnumber(sp); outcr();
+    outsc("** pop value= "); outnumber(stack[sp - 1].a); outcr();
+  }
+
+  if (sp == 0) {
+    error(ESTACK);
+    return 0;
+  }
+
+  return stack[--sp].a;
+}
+
+void pushinteger(index_t i) {
+
+  if (DEBUG) {
+    outsc("** push sp= "); outnumber(sp); outcr();
+    outsc("** push value= "); outnumber(i); outcr();
+  }
+
+  if (sp == STACKSIZE)
+    error(ESTACK);
+  else
+    stack[sp++].i = i;
+}
+
+index_t popinteger() {
+
+  if (DEBUG) {
+    outsc("** pop sp= "); outnumber(sp); outcr();
+    outsc("** pop value= "); outnumber(stack[sp - 1].i); outcr();
+  }
+
+  if (sp == 0) {
+    error(ESTACK);
+    return 0;
+  }
+
+  return stack[--sp].i;
+}
+
+
+/* this one gets a positive integer from the stack and traps the error*/
+address_t popaddress() {
+  number_t tmp = 0;
+
+  tmp = pop();
+  if (tmp < 0) {
+    error(EORANGE);
+    return 0;
+  }
+  return (address_t) tmp;
+}
+
+void clearst() {
+  sp = 0;
+}
+
+/* these are not really stack operations but a way to handle temp char data (not needed right now) */
+address_t charsp;
+
+void pushchar(char ch) {}
+
+char popchar() {
+  return 0;
+}
+
+/*
+   clear the cursor for the READ/DATA mechanism
+*/
+void clrdata() {
+#ifdef HASDARTMOUTH
+  data = 0;
+#endif
+}
+
+/*
+   Stack handling for FOR
+   Reimplementation of the for stack with names and with all loops
+   cleaned up.
+*/
+
+/* the new stack type for loops */
+void pushloop(name_t* name, token_t t, address_t here, number_t to, number_t step) {
+  address_t i;
+
+  if (DEBUG) {
+    outsc("** loopsp and here in pushloopstack ");
+    outnumber(loopsp); outspc(); outnumber(here); outcr();
+    if (name != 0) {
+      outsc("** loop name ");
+      outname(name);
+      outcr();
+    }
+    else {
+      outsc("** loop name is 0");
+      outcr();
+    }
+    outsc("** loop token "); outnumber(t); outcr();
+    outsc("** loop to "); outnumber(to); outcr();
+    outsc("** loop step "); outnumber(step); outcr();
+  }
+
+  /*
+     Before pushing into the loop stack we check is an
+     old loop exists.
+
+     There are two situations to handle:
+     1. A loop is reentered because a GOTO went back to or even before
+    	the loop start. This is identified by the here location.
+     2. A new FOR loop is created after the existing loop with the same
+    	variable name. This happens if a jump or break went outside the
+      loop. This is identified by the variable name.
+  */
+
+  /* Situation 1, scan for here */
+  for (i = 0; i < loopsp; i++) {
+    if (loopstack[i].here == here) {
+      loopsp = i;
+      break;
+    }
+  }
+
+  /* Situation 2, scan for the name */
+  if (name != 0) {
+    for (i = 0; i < loopsp; i++) {
+      if (cmpname(&loopstack[i].var, name)) {
+        loopsp = i;
+        break;
+      }
+    }
+  }
+
+  /* Add the loop to the stack */
+  if (loopsp < FORDEPTH) {
+    if (t == TWHILE || t == TREPEAT) {
+      loopstack[loopsp].var.token = t;
+    } else {
+      if (name != 0) {
+        loopstack[loopsp].var = *name;
+#if defined(HASAPPLE1) && defined(HASLOOPOPT)
+        loopstack[loopsp].varaddress = bfind(name);
+#else
+        loopstack[loopsp].varaddress = 0;
+#endif
+      } else {
+        loopstack[loopsp].var.c[0] = 0;
+        loopstack[loopsp].var.l = 0;
+        loopstack[loopsp].var.token = 0;
+        loopstack[loopsp].varaddress = 0;
+      }
+    }
+    loopstack[loopsp].here = here;
+    loopstack[loopsp].to = to;
+    loopstack[loopsp].step = step;
+    loopsp++;
+    return;
+  } else
+    error(ELOOP);
+}
+
+/* what is the active loop */
+bloop_t* activeloop() {
+  if (loopsp > 0) {
+    return &loopstack[loopsp - 1];
+  } else {
+    error(ELOOP);
+    return 0;
+  }
+}
+
+void droploop() {
+  if (loopsp > 0) {
+    loopsp--;
+  } else {
+    error(ELOOP);
+    return;
+  }
+}
+
+void clrforstack() {
+  loopsp = 0;
+}
+
+/* GOSUB stack handling */
+void pushgosubstack(mem_t a) {
+  if (gosubsp < GOSUBDEPTH) {
+    gosubstack[gosubsp] = here;
+#ifdef HASEVENTS
+    gosubarg[gosubsp] = a;
+#endif
+    gosubsp++;
+  } else
+    error(TGOSUB);
+}
+
+void popgosubstack() {
+  if (gosubsp > 0) {
+    gosubsp--;
+  } else {
+    error(TRETURN);
+    return;
+  }
+  here = gosubstack[gosubsp];
+}
+
+void dropgosubstack() {
+  if (gosubsp > 0) {
+    gosubsp--;
+  } else {
+    error(TGOSUB);
+  }
+}
+
+void clrgosubstack() {
+  gosubsp = 0;
+}
+
+/* two helper commands for structured BASIC, without the GOSUB stack */
+
+void pushlocation(blocation_t* l) {
+  if (st == SINT) l->location = bi - ibuffer;
+  else  l->location = here;
+  l->token = token;
+}
+
+void poplocation(blocation_t* l) {
+  if (st == SINT) bi = ibuffer + l->location;
+  else here = l->location;
+  token = l->token;
+}
+
+/* little helpers of the io functions */
+
+/* send a newline */
+void outcr() {
+#ifdef HASSERIAL1
+  if (sendcr) outch('\r');
+#endif
+  outch('\n');
+}
+
+/* send a space */
+void outspc() {
+  outch(' ');
+}
+
+/* output a zero terminated string - c style */
+void outsc(const char *c) {
+  while (*c != 0) outch(*c++);
+}
+
+/* output a zero terminated string in a formated box padding spaces
+		needed for catalog output */
+void outscf(const char *c, index_t f) {
+  int i = 0;
+
+  while (*c != 0) {
+    outch(*c++);
+    i++;
+  }
+  if (f > i) {
+    f = f - i;
+    while (f--) outspc();
+  }
+}
+
+/*
+    two console logger functions, they are not needed in BASIC but in the runtime
+    environment, RTDEBUGSTREAM is the channel to log to
+*/
+
+#ifdef RTDEBUG
+void consolelog(char* ch) {
+  mem_t ood = od;
+  od = RTDEBUGSTREAM;
+  outsc(ch);
+  od = ood;
+}
+void consolelognum(int i) {
+  mem_t ood = od;
+  od = RTDEBUGSTREAM;
+  outnumber(i);
+  od = ood;
+}
+#else
+void consolelog(char* ch) {}
+void consolelognum(int i) {}
+#endif
+
+/*
+ 	Reading a positive number from a char buffer
+ 	maximum number of digits is adjusted to SBUFSIZE
+  as a fail safe.
+  This is only for integers.
+*/
+address_t parsenumber(char *c, number_t *r) {
+  address_t nd = 0;
+
+  *r = 0;
+  while (*c >= '0' && *c <= '9' && *c != 0) {
+    *r = *r * 10 + *c++ -'0';
+    nd++;
+    if (nd == SBUFSIZE) break;
+  }
+  return nd;
+}
+
+/*
+   Reimplementation of parsenumber with the capability
+   to scan hex, octal, and binary numbers as well.
+   This is only for integers.
+*/
+address_t parsenumbern(char *c, number_t *r) {
+  address_t nd = 0;
+  mem_t base = 10;
+
+  *r = 0;
+
+  /* the base */
+  if (*c == '0') {
+    c++;
+    nd++;
+    if (*c == 'x' || *c == 'X') {
+      c++;
+      nd++;
+      base = 16;
+    } else if (*c == 'b' || *c == 'B') {
+      c++;
+      nd++;
+      base = 2;
+    } else if (*c == 'o' || *c == 'O') {
+      c++;
+      nd++;
+      base = 8;
+    }
+  }
+
+  /* the digits */
+  while (*c != 0) {
+    if (base == 16) {
+      if (*c >= '0' && *c <= '9') *r = *r * 16 + *c - '0';
+      else if (*c >= 'A' && *c <= 'F') *r = *r * 16 + *c - 'A' + 10;
+      else if (*c >= 'a' && *c <= 'f') *r = *r * 16 + *c - 'a' + 10;
+      else break;
+    } else if (base == 8) {
+      if (*c >= '0' && *c <= '7') *r = *r * 8 + *c - '0';
+      else break;
+    } else if (base == 2) {
+      if (*c == '0' || *c == '1') *r = *r * 2 + *c - '0';
+      else break;
+    } else {
+      if (*c >= '0' && *c <= '9') *r = *r * 10 + *c - '0';
+      else break;
+    }
+    c++;
+    nd++;
+    if (nd == SBUFSIZE) break;
+  }
+  return nd;
+}
+
+
+#ifdef HASFLOAT
+/* a poor man's atof implementation with character count */
+address_t parsenumber2(char *c, number_t *r) {
+  address_t nd = 0;
+  index_t i;
+  number_t fraction = 0;
+  number_t exponent = 0;
+  mem_t nexp = 0;
+
+  *r = 0;
+
+  /* integer part */
+  i = parsenumber(c, r);
+  c += i;
+  nd += i;
+
+  /* the fractional part */
+  if (*c == '.') {
+    c++;
+    nd++;
+
+    i = parsenumber(c, &fraction);
+    c += i;
+    nd += i;
+
+    if (i > 0) {
+      while ((--i) >= 0) fraction = fraction / 10;
+      *r += fraction;
+    }
+  }
+
+  /* the exponent */
+  if (*c == 'E' || *c == 'e') {
+    c++;
+    nd++;
+    if (*c == '-') {
+      c++;
+      nd++;
+      nexp = 1;
+    };
+    i = parsenumber(c, &exponent);
+    nd += i;
+      while ((--exponent) >= 0) if (nexp) *r = *r / 10; else *r = *r * 10;
+  }
+
+  return nd;
+}
+#endif
+
+/*
+ 	Convert a number to a string.
+
+  All writenumber funcions assume that the buffer is large enough.
+  The caller has to handle this. This normally no problem because 
+  the decimal numbers converted are limited to the size of the
+  number_t type. For this reason the stringbuffer length in basic.h
+  is set to 16 time the size of the number_t type.
+
+ 	The argument type controls the largest displayable integer.
+    wnumber_t is defined in basic.h as either int or long for float
+    systems.
+*/
+address_t writenumber(char *c, wnumber_t v) {
+  address_t nd = 0;
+  index_t i, j;
+  mem_t s = 1;
+  char c1;
+
+  /* the sign */
+  if (v < 0) s = -1;
+
+  /* the digits */
+  do {
+    c[nd++] = (v % 10) * s + '0';
+    v = v / 10;
+  } while (v != 0);
+
+  /* print the minus */
+  if (s < 0 ) c[nd] = '-'; else nd--;
+
+  /* reverse the order of digits */
+  i = 0;
+  j = nd;
+  while (j > i) {
+    c1 = c[i];
+    c[i] = c[j];
+    c[j] = c1;
+    i++;
+    j--;
+  }
+
+  nd++;
+  c[nd] = 0;
+  return nd;
+}
+
+/* writenumber with arbitrary base support */
+address_t writenumbern(char *c, wnumber_t v, mem_t n) {
+  address_t nd = 0;
+  index_t i, j;
+  mem_t s = 1;
+  char c1;
+
+  /* the sign */
+  if (v < 0) s = -1;
+
+  /* the digits */
+  do {
+    c[nd] = (v % n) * s + '0';
+    v = v / n;
+    /* for base 16 we need more work */
+    if (c[nd] > '9') c[nd] = c[nd] + 7;
+    nd++;
+  } while (v != 0);
+
+  /* print the minus */
+  if (s < 0 ) c[nd] = '-'; else nd--;
+
+  /* reverse the order of digits */
+  i = 0;
+  j = nd;
+  while (j > i) {
+    c1 = c[i];
+    c[i] = c[j];
+    c[j] = c1;
+    i++;
+    j--;
+  }
+
+  nd++;
+  c[nd] = 0;
+  return nd;
+}
+
+#ifdef HASFLOAT
+/*
+   this is for floats, handling output without library
+   functions as well.
+*/
+address_t tinydtostrf(number_t v, index_t p, char* c) {
+  index_t i;
+  address_t nd = 0;
+  number_t f;
+
+  /* if we are in forced integer mode */
+  if (forceint) {
+    v = trunc(v);
+    return writenumber(c, (int)v);
+  }
+
+  /* we do the sign here */
+  if (v < 0) {
+    v = fabs(v);
+    c[nd++] = '-';
+  }
+
+  /* write the integer part */
+  nd += writenumber(c + nd, (int)v);
+  c[nd++] = '.';
+
+  /* only the fraction to precision p */
+  f = fabs(v);
+
+  /* get p digits of the fraction */
+  for (i = p; i > 0; i--) {
+    f = f - floor(f);
+    f = f * 10;
+    c[nd++] = (int)floor(f) + '0';
+  }
+
+  /* and a terminating 0 */
+  c[nd] = 0;
+  return nd;
+}
+
+address_t writenumber2(char *c, number_t vi) {
+  index_t i;
+  index_t nd;
+  number_t f;
+  index_t exponent = 0;
+  mem_t eflag = 0;
+  const int p = 5;
+
+  /* pseudo integers are displayed as integer
+  		zero trapped here */
+  f = floor(vi);
+  if (f == vi && fabs(vi) < maxnum) return writenumber(c, vi);
+
+  /* earlier, floats where displayed in POSIx using the libraties
+     return sprintf(c, "%g", vi);
+     we dont do this any more
+  */
+
+  /* we check if we have anything to write */
+  if (!isfinite(vi)) {
+    c[0] = '*';
+    c[1] = 0;
+    return 1;
+  }
+
+  /* normalize the number and see which exponent we have to deal with */
+  f = vi;
+  while (fabs(f) < 1.0)   {
+    f = f * 10;
+    exponent--;
+  }
+  while (fabs(f) >= 10.0 - 0.00001) {
+    f = f / 10;
+    exponent++;
+  }
+
+  /* there are platforms where dtostrf is broken, we do things by hand in a simple way */
+
+  if (exponent > -2 && exponent < 7) {
+    tinydtostrf(vi, precision, c);
+  } else {
+    tinydtostrf(f, precision, c);
+    eflag = 1;
+  }
+
+  /* remove trailing zeros */
+  for (i = 0; (i < SBUFSIZE && c[i] != 0 ); i++);
+  i--;
+
+  /* */
+  while (c[i] == '0' && i > 1) {
+    i--;
+  }
+  i++;
+
+  /* add the exponent */
+  if (eflag && exponent != 0) {
+    c[i++] = 'E';
+    i += writenumber(c + i, exponent);
+  }
+
+  c[i] = 0;
+  return i;
+
+}
+#endif
+
+/*
+   innumber is used as a helper only by xinput(). It reads a number from an input
+   buffer and returns it in the number_t r. It returns 0 if the number is invalid, 1 if
+   the number is valid, and -1 if the user has pressed the BREAKCHAR key.
+
+   Unlike the old innumber() implementation it is meant to read comma separated numbers
+   through input. Handling of the buffer is done by the calling function.
+
+   The TINYBASICINPUT is an alternative implementation following the Palo Alto BASIC
+   way of doing it. The expression parser is reused. This allows variables names and
+   expressions to be used as input as well.
+   Due to the reuse of sbuffer in the calling function, this will probably only work
+   in RUN mode.
+*/
+
+int innumber(number_t *r, char* buffer, address_t k) {
+  address_t i = k;
+  mem_t s = 1;
+
+#ifndef HASTINYBASICINPUT
+  /* result is zero*/
+  *r = 0;
+
+  /* remove all leading whitespaces first */
+  while ((buffer[i] == ' ' || buffer[i] == '\t') && i <= (address_t) buffer[0]) i++;
+
+  /* is there anything left */
+  if (i > (address_t) buffer[0]) return 0;
+
+  /* now the sign */
+  if (buffer[i] == '-') {
+    s = -1;
+    i++;
+  }
+
+  /* check for the break character */
+#if defined(BREAKCHAR)
+  if (buffer[i] == BREAKCHAR) return -1;
+#endif
+
+  /* the number */
+#ifndef HASFLOAT
+  if (buffer[i] < '0' || buffer[i] > '9') return 0;
+  i += parsenumber(&buffer[i], r);
+#else
+  if ((buffer[i] < '0' || buffer[i] > '9') && buffer[i] != '.') return 0;
+  i += parsenumber2(&buffer[i], r);
+#endif
+
+  /* the sign */
+  *r *= s;
+  return i;
+#else
+  char *b;
+  token_t t;
+
+  /* result is zero */
+  *r = 0;
+
+  /* save the interpreter state */
+  b = bi;
+  s = st;
+  t = token;
+
+  /* switch to fake interactive with the buffer as input */
+  st = SINT;
+  bi = buffer + k;
+
+  /* BREAK handling */
+#if defined(BREAKCHAR)
+  if (*bi == BREAKCHAR) {
+    return -1;
+  }
+#endif
+
+  /* start to interpret the buffer as an expression */
+  nexttoken();
+  expression();
+
+  /* restore the interpreter state */
+  i = bi - buffer - 1;
+  bi = b;
+  st = s;
+  token = t;
+
+  /* error handling, we trap the error and return zero */
+  if (er) {
+    er = 0;
+    return 0;
+  }
+
+  /* the result is on the stack */
+  *r = pop();
+  return i;
+#endif
+}
+
+/* prints a number */
+void outnumber(number_t n) {
+  address_t nd, i;
+
+  /* number write to sbuffer, remember the number of digits in nd */
+#ifndef HASFLOAT
+  nd = writenumber(sbuffer, n);
+#else
+  nd = writenumber2(sbuffer, n);
+#endif
+
+  /* negative number format aligns right */
+  if (form < 0) {
+    i = nd;
+    while (i < -form) {
+      outspc();
+      i++;
+    }
+  }
+
+  /* the number */
+  outs(sbuffer, nd);
+
+  /* number formats in Palo Alto style, positive numbers align left */
+  if (form > 0) {
+    while (nd < form) {
+      outspc();
+      nd++;
+    }
+  }
+}
+
+/*
+ 	Layer 1 functions - providing data into the global variable and
+ 	changing the interpreter state
+*/
+
+/*
+ 	Lexical analyser - tokenizes the input line.
+
+ 	nexttoken() increments the input buffer index bi and delivers values in the global
+ 		variable token, with arguments in the accumulators ax, x and the index register ir
+ 		name is used in the routine.
+
+ 	name, sr, ax and x change values in nexttoken and deliver the result to the calling
+ 	function.
+
+ 	bi and ibuffer should not be changed or used for any other function in
+ 	interactive node as they contain the state of nexttoken(). In run mode
+ 	bi and ibuffer are not used as the program is fully tokenized in mem.
+
+ 	all this is pretty much stateless.
+*/
+
+/* skip whitespaces */
+void whitespaces() {
+  while (*bi == ' ' || *bi == '\t') bi++;
+}
+
+/* upper case, don't trust the buildins on microcontrollers */
+char btoupper(char c) {
+  if (c >= 'a' && c <= 'z') return c - 32; else return c;
+}
+
+/* the token stream */
+void nexttoken() {
+  address_t k, l, i;
+  char* ir;
+  char quotechar;
+
+  /* RUN mode vs. INT mode, in RUN mode we read from mem via gettoken() */
+  if (st == SRUN || st == SERUN) {
+    /* in the token stream we call fastticker - all fast timing functions are in stream */
+    fastticker();
+    /* read the token from memory */
+    gettoken();
+    /* show what we are doing */
+    if (debuglevel > 1) {
+      debugtoken();
+      outcr();
+    }
+    return;
+  }
+
+  /* after change in buffer logic the first byte is reserved for the length */
+  if (bi == ibuffer) bi++;
+
+  /* literal mode only(!) EOL ends literal mode, used to have REM without quotes */
+  if (lexliteral) {
+    token = *bi;
+    if (*bi != '\0') bi++; else lexliteral = 0;
+    return;
+  }
+
+  /* remove whitespaces outside strings */
+  whitespaces();
+
+  /* end of line token */
+  if (*bi == '\0') {
+    token = EOL;
+    if (DEBUG) debugtoken();
+    return;
+  }
+
+  /* unsigned numbers, value returned in x */
+#ifndef HASFLOAT
+  if (*bi <= '9' && *bi >= '0') {
+    bi += parsenumber(bi, &x);
+#else
+  if ((*bi <= '9' && *bi >= '0') || *bi == '.') {
+    bi += parsenumber2(bi, &x);
+#endif
+    token = NUMBER;
+    if (DEBUG) debugtoken();
+    return;
+  }
+
+  /* strings between " " or " EOL, value returned in ir and in sr for now */
+  if (*bi == '"' || *bi == '\'') {
+    quotechar = *bi;
+    k = 0;
+    bi++;
+    ir = bi;
+    sr.ir = bi;
+    while (*bi != quotechar && *bi != '\0') {
+      k++;
+      bi++;
+    }
+    bi++;
+    token = STRING;
+    sr.length = k;
+    sr.address = 0; /* we don't find the string in BASIC memory, as we lex from bi */
+    if (DEBUG) debugtoken();
+    return;
+  }
+
+  /*
+   	relations
+   	single character relations are their own token
+   	>=, =<, =<, =>, <> are tokenized
+  */
+  if (*bi == '=') {
+    bi++;
+    whitespaces();
+    if (*bi == '>') {
+      token = GREATEREQUAL;
+      bi++;
+    } else if (*bi == '<') {
+      token = LESSEREQUAL;
+      bi++;
+    } else {
+      token = '=';
+    }
+    if (DEBUG) debugtoken();
+    return;
+  }
+
+  if (*bi == '>') {
+    bi++;
+    whitespaces();
+    if (*bi == '=') {
+      token = GREATEREQUAL;
+      bi++;
+    } else if (*bi == '>') {
+      token = TSHR;
+      bi++;
+    } else  {
+      token = '>';
+    }
+    if (DEBUG) debugtoken();
+    return;
+  }
+
+  if (*bi == '<') {
+    bi++;
+    whitespaces();
+    if (*bi == '=') {
+      token = LESSEREQUAL;
+      bi++;
+    } else if (*bi == '>') {
+      token = NOTEQUAL;
+      bi++;
+    } else if (*bi == '<') {
+      token = TSHL;
+      bi++;
+    } else {
+      token = '<';
+    }
+    if (DEBUG) debugtoken();
+    return;
+  }
+
+  /*
+   	Keyworks and variables
+
+   	Isolate a word, bi points to the beginning, l is the length of the word.
+   	ir points to the end of the word after isolating.
+   	@ is a letter here to make the special @ arrays possible.
+  */
+
+  l = 0;
+  ir = bi;
+  while (-1) {
+    if (*ir >= 'a' && *ir <= 'z') {
+      if (!lowercasenames) *ir -= 32; /* toupper code, changing the input buffer directly */
+      ir++;
+      l++;
+    } else if ((*ir >= '@' && *ir <= 'Z') || *ir == '_') {
+      ir++;
+      l++;
+    } else {
+      break;
+    }
+  }
+
+
+  /*
+   	Ir is reused here to implement string compares
+   	scanning the keyword array.
+   	Once a keyword is detected the input buffer is advanced
+   	by its length, and the token value is returned.
+
+   	Keywords are an array of null terminated strings.
+      They are always matched uppercase.
+  */
+  k = 0;
+  while (gettokenvalue(k) != 0) {
+    ir = getkeyword(k);
+    i = 0;
+    while (*(ir + i) != 0) {
+      if (*(ir + i) != btoupper(*(bi + i))) {
+        k++;
+        i = 0;
+        break;
+      } else
+        i++;
+    }
+    if (i == 0) continue;
+    bi += i;
+    token = gettokenvalue(k);
+    if (token == TREM) lexliteral = 1;
+    if (DEBUG) debugtoken();
+    return;
+  }
+
+  /*
+     A variable has length 2 with either two letters or a letter
+     and a number. @ can be the first letter of a variable.
+     Here, no tokens can appear any more as they have been processed
+     further up.
+
+     The longname code supports MAXNAME characters and _ as additional character.
+  */
+#ifdef HASLONGNAMES
+  if (l > 0 && l <= MAXNAME) {
+    token = VARIABLE;
+    zeroname(&name);
+    while (((*bi >= '0' && *bi <= '9') ||
+            (*bi >= '@' && *bi <= 'Z') ||
+            (*bi >= 'a' && *bi <= 'z') ||
+            (*bi == '_') ) && name.l < MAXNAME && *bi != 0) {
+      name.c[name.l] = *bi;
+      bi++;
+      name.l++;
+    }
+    if (*bi == '$') {
+      token = STRINGVAR;
+      bi++;
+    }
+    whitespaces();
+    if (token == VARIABLE && *bi == '(' ) {
+      token = ARRAYVAR;
+    }
+    /* the new code filling the name variable directly, will be used in the entire code soon */
+    name.token = token;
+    if (DEBUG) debugtoken();
+    return;
+  }
+#else
+  if (l == 1 || l == 2) {
+    token = VARIABLE;
+    name.l = 0;
+    name.c[0] = *bi;
+    name.c[1] = 0;
+    bi++;
+    if ((*bi >= '0' && *bi <= '9') || (*bi >= 'A' && *bi <= 'Z') || *bi == '_' ) {
+      name.c[1] = *bi;
+      bi++;
+    }
+    if (*bi == '$') {
+      token = STRINGVAR;
+      bi++;
+    }
+    whitespaces();
+    if (token == VARIABLE && *bi == '(' ) {
+      token = ARRAYVAR;
+    }
+    /* the new code filling the name variable directly, will be used in the entire code soon */
+    name.token = token;
+    if (DEBUG) debugtoken();
+    return;
+  }
+#endif
+
+  /* other single characters are parsed and stored */
+  token = *bi;
+  bi++;
+  if (DEBUG) debugtoken();
+  return;
+}
+
+/*
+   Layer 1 - program editor
+
+ 	Editing the program, the structure of a line is
+ 	LINENUMBER linenumber(2 or more bytes) token(n bytes)
+
+   store* stores something to memory
+   get* retrieves information
+
+ 	No matter how long number_t is in the C implementation
+ 	we pack into bytes, this is clumsy but portable
+ 	the store and get commands all operate on here
+ 	and advance it
+
+ 	storetoken() operates on the variable top.
+ 	We always append at the end and then sort.
+
+ 	gettoken() operate on the variable here
+ 	which will also be the key variable in run mode.
+
+ 	tokens are stored including their payload.
+
+ 	This group of functions changes global states and
+ 	cannot be called at program runtime with saving
+ 	the relevant global variable to the stack.
+*/
+
+/*
+    check if we still have memory left, on RAM only systems we make
+    sure that we don't hit himem. On systems with EEPROM program storage we make
+    sure that we stay within the EEPROM range.
+*/
+char nomemory(number_t b) {
+#ifndef EEPROMMEMINTERFACE
+  if (top >= himem - b) return 1; else return 0;
+#else
+  if (top >= elength() - eheadersize - b) return 1; else return 0;
+#endif
+}
+
+/* store a token - check free memory before changing anything */
+void storetoken() {
+  int i;
+
+  switch (token) {
+    case LINENUMBER:
+      if (nomemory(addrsize + 1)) break;
+      memwrite2(top++, token);
+      setaddress(top, memwrite2, ax);
+      top += addrsize;
+      return;
+    case NUMBER:
+      if (nomemory(numsize + 1)) break;
+      memwrite2(top++, token);
+      setnumber(top, memwrite2, x);
+      top += numsize;
+      return;
+    case ARRAYVAR:
+    case VARIABLE:
+    case STRINGVAR:
+      if (nomemory(sizeof(name_t))) break;
+      memwrite2(top++, token);
+      top = setname_pgm(top, &name);
+      return;
+    case STRING:
+      i = sr.length;
+      if (nomemory(i + 2)) break;
+      memwrite2(top++, token);
+      memwrite2(top++, i);
+      while (i > 0) {
+        memwrite2(top++, *sr.ir++);
+        i--;
+      }
+      return;
+    default:
+      if (token >= -127) { /* the good old code with just one byte token */
+        if (nomemory(1)) break;
+        memwrite2(top++, token);
+      } else {
+#ifdef HASLONGTOKENS
+        if (nomemory(2)) break; /* this is the two byte token extension */
+        memwrite2(top++, TEXT1);
+        memwrite2(top++, token + 255);
+#endif
+      }
+      return;
+  }
+}
+
+
+/*
+   wrappers around mem access in genereal
+
+   memread is used only in the token stream, it reads from a stream
+   read only. If run is done from eeprom then bytes are taken from this
+   stream, this would also be the place to implement direct run from
+   another device like a file system or embedded programs on flash.
+   Only the token stream uses memread.
+
+   memread2 and memwrite2 always go to ram. They are read/write. Variables and
+   the program editor uses these functions.
+
+   currently only the SPIRAM and the EEPROM direct edit interface is implemented.
+   This is handled in the runtime library.
+
+   USEMEMINTERFACE is the macro to control this.
+
+   The POSIX code has a test interface for SPIRAM as a dummy.
+
+*/
+#ifndef USEMEMINTERFACE
+mem_t memread(address_t a) {
+  if (st != SERUN) {
+    return mem[a];
+  } else {
+    return eread(a + eheadersize);
+  }
+}
+
+mem_t memread2(address_t a) {
+  return mem[a];
+}
+
+void memwrite2(address_t a, mem_t c) {
+  mem[a] = c;
+}
+#else
+#if defined(SPIRAMINTERFACE) || defined(SPIRAMSIMULATOR)
+mem_t memread(address_t a) {
+  if (st != SERUN) {
+    return spiram_robufferread(a);
+  } else {
+    return eread(a + eheadersize);
+  }
+}
+
+mem_t memread2(address_t a) {
+  return spiram_rwbufferread(a);
+}
+
+void memwrite2(address_t a, mem_t c) {
+  spiram_rwbufferwrite(a, c);
+}
+#else
+#ifdef EEPROMMEMINTERFACE
+mem_t memread(address_t a) {
+  if (a < elength() - eheadersize) return eread(a + eheadersize); else return mem[a - (elength() - eheadersize)];
+}
+
+mem_t memread2(address_t a) {
+  return memread(a);
+}
+
+void memwrite2(address_t a, mem_t c) {
+  if (a < elength() - eheadersize) eupdate(a + eheadersize, c); else mem[a - (elength() - eheadersize)] = c;
+}
+#endif
+#endif
+#endif
+
+
+/* get a token from memory */
+void gettoken() {
+  stringlength_t i;
+
+  /* if we have reached the end of the program, EOL is always returned
+  		we don't rely on mem having a trailing EOL */
+  if (here >= top) {
+    token = EOL;
+    return;
+  }
+
+  /* if we have no data type we are done reading just one byte */
+  token = memread(here++);
+  name.token = token;
+
+  /* if there are multibyte tokens, get the next byte and construct a token value <-127 */
+#ifdef HASLONGTOKENS
+  if (token == TEXT1) {
+    token = memread(here++) - 255;
+  }
+#endif
+
+  /* otherwise we check for the argument */
+  switch (token) {
+    case LINENUMBER:
+      ax = getaddress(here, memread);
+      here += addrsize;
+      break;
+    case NUMBER:
+      x = getnumber(here, memread);
+      here += numsize;
+      break;
+    case ARRAYVAR:
+    case VARIABLE:
+    case STRINGVAR:
+      here = getname(here, &name, memread);
+      name.token = token;
+      break;
+    case STRING:
+      sr.length = (unsigned char)memread(here++);
+
+      /*
+        	if we run from EEPROM, the input buffer is used to get string constants.
+          if we run on a system with real memory, we produce a mem pointer
+          otherwise the caller has to handle strings through the address (SPIRAM systems)
+      */
+      if (st == SERUN) {
+        for (i = 0; i < sr.length; i++) ibuffer[i] = memread(here + i);
+        sr.ir = ibuffer;
+      } else {
+#ifndef USEMEMINTERFACE
+        sr.ir = (char*)&mem[here];
+#else
+        sr.ir = 0;
+#endif
+      }
+      sr.address = here;
+      here += sr.length;
+  }
+}
+
+/* goto the first line of a program */
+void firstline() {
+  if (top == 0) {
+    ax = 0;
+    return;
+  }
+  here = 0;
+  gettoken();
+}
+
+/* goto the next line, search forward */
+void nextline() {
+  while (here < top) {
+    gettoken();
+    if (token == LINENUMBER) return;
+    if (here >= top) {
+      here = top;
+      ax = 0;
+      return;
+    }
+  }
+}
+
+/*
+   the line cache mechanism, useful for large codes.
+   addlinecache does not test if the line already exist because it
+   assumes that findline calls it only if a new line is to be stored
+   the LINECACHE size depends on the architecture.
+*/
+#if defined(LINECACHESIZE) && LINECACHESIZE>0
+const unsigned char linecachedepth = LINECACHESIZE;
+typedef struct {
+  address_t l;
+  address_t h;
+} linecacheentry;
+linecacheentry linecache[LINECACHESIZE];
+unsigned char linecachehere = 0;
+
+void clrlinecache() {
+  unsigned char i;
+
+  for (i = 0; i < linecachedepth; i++) linecache[i].l = linecache[i].h = 0;
+  linecachehere = 0;
+}
+
+void addlinecache(address_t l, address_t h) {
+  linecache[linecachehere].l = l;
+  linecache[linecachehere].h = h;
+  linecachehere = (linecachehere + 1) % linecachedepth;
+}
+
+address_t findinlinecache(address_t l) {
+  unsigned char i;
+
+  for (i = 0; i < linecachedepth && linecache[i].l != 0; i++) {
+    if (linecache[i].l == l) return linecache[i].h;
+  }
+  return 0;
+}
+#else
+void clrlinecache() {}
+void addlinecache(address_t l, address_t h) {}
+address_t findinlinecache(address_t l) {
+  return 0;
+}
+#endif
+
+
+/* find a line, look in cache then search from the beginning
+   x is used as the valid line number once a line is found
+   hence x must be global
+   (this is the logic of the gettoken mechanism)
+*/
+void findline(address_t l) {
+  address_t a;
+
+  /* we know it already, here to advance */
+  if ((a = findinlinecache(l))) {
+    here = a;
+    token = LINENUMBER;
+    ax = l;
+    return;
+  }
+
+  /* we need to search */
+  here = 0;
+  while (here < top) {
+    gettoken();
+    if (token == LINENUMBER && ax == l ) {
+      /* now that we know we cache */
+      addlinecache(l, here);
+      return;
+    }
+  }
+  error(ELINE);
+}
+
+/* finds the line of a location */
+address_t myline(address_t h) {
+  address_t l = 0;
+  address_t l1 = 0;
+  address_t here2;
+
+  here2 = here;
+  here = 0;
+  gettoken();
+  while (here < top) {
+    if (token == LINENUMBER) {
+      l1 = l;
+      l = ax;
+    }
+    if (here >= h) break;
+    gettoken();
+  }
+  here = here2;
+  if (token == LINENUMBER)
+    return l1;
+  else
+    return l;
+}
+
+/*
+ 	Move a block of storage beginng at b ending at e
+ 	to destination d. No error handling here!!
+*/
+void moveblock(address_t b, address_t l, address_t d) {
+  address_t i;
+
+  if (d + l > himem) {
+    error(EOUTOFMEMORY);
+    return;
+  }
+  if (l < 1) return;
+
+  if (b < d) for (i = l; i > 0; i--) memwrite2(d + i - 1, memread2(b + i - 1));
+  else for (i = 0; i < l; i++) memwrite2(d + i, memread2(b + i));
+}
+
+/* zero a block of memory */
+void zeroblock(address_t b, address_t l) {
+  address_t i;
+
+  if (b + l > himem) {
+    error(EOUTOFMEMORY);
+    return;
+  }
+  if (l < 1) return;
+
+  for (i = 0; i < l + 1; i++) memwrite2(b + i, 0);
+}
+
+/*
+ 	Line editor:
+
+ 	stage 1: no matter what the line number is - store at the top
+    	remember the location in here.
+ 	stage 2: see if it is only an empty line - try to delete this line
+ 	stage 3: calculate lengthes and free memory and make room at the
+ 		appropriate place
+ 	stage 4: copy to the right place
+
+ 	Very fragile code, con't change if you don't have to
+
+ 	zeroblock statements commented out after EOL code was fixed
+*/
+#ifdef DEBUG
+/* diagnosis function */
+void diag() {
+  outsc("top, here, y and x\n");
+  outnumber(top); outspc();
+  outnumber(here); outspc();
+  outcr();
+}
+#endif
+
+void storeline() {
+  const index_t lnlength = addrsize + 1;
+  index_t linelength;
+  number_t newline;
+  address_t here2, here3;
+  address_t t1, t2;
+  address_t y;
+
+  /* the data pointers becomes invalid once the code has been changed */
+  clrdata();
+
+  /* line cache is invalid on line storage */
+  clrlinecache();
+
+  if (DEBUG) {
+    outsc("storeline ");
+    outnumber(ax);
+    outsc(" : ");
+    outsc(ibuffer);
+    outcr();
+  }
+
+  /*
+   	stage 1: append the line at the end of the memory,
+   	remember the line number on the stack and the old top in here
+  */
+  t1 = ax;
+  here = top;
+  newline = here;
+  token = LINENUMBER;
+  do {
+    storetoken();
+    if (er != 0 ) {
+      top = newline;
+      here = 0;
+      return;
+    }
+    nexttoken();
+  } while (token != EOL);
+
+  ax = t1;									/* recall the line number */
+  linelength = top - here;	/* calculate the number of stored bytes */
+
+  /*
+   	stage 2: check if only a linenumber stored - then delete this line
+  */
+  if (linelength == (lnlength)) {
+    top -= (lnlength);
+    findline(ax);
+    if (er) return;
+    y = here - lnlength;
+    nextline();
+    here -= lnlength;
+    if (ax != 0) {
+      moveblock(here, top - here, y);
+      top = top - (here - y);
+    } else {
+      top = y;
+    }
+    return;
+  }
+
+  /*
+   	stage 3, a nontrivial line with linenumber x is to be stored
+   	try to find it first by walking through all lines
+  */
+  else {
+    y = ax;
+    here2 = here;
+    here = lnlength;
+    nextline();
+    /* there is no nextline after the first line, we are done */
+    if (ax == 0) return;
+    /* go back to the beginning */
+    here = 0;
+    here2 = 0;
+    while (here < top) {
+      here3 = here2;
+      here2 = here;
+      nextline();
+      if (ax > y) break;
+    }
+
+    /*
+     	at this point y contains the number of the line to be inserted
+     	x contains the number of the first line with a higher line number
+     	or 0 if the line is to be inserted at the end
+     	here points to the following line and here2 points to the previous line
+    */
+    if (ax == 0) {
+      here = here3 - lnlength;
+      gettoken();
+      if (token == LINENUMBER && ax == y) { // we have a double line at the end
+        here2 -= lnlength;
+        here -= lnlength;
+        moveblock(here2, linelength, here);
+        top = here + linelength;
+      }
+      return;
+    }
+    here -= lnlength;
+    t1 = here;
+    here = here2 - lnlength;
+    t2 = here;
+    gettoken();
+    if (ax == y) {		/* the line already exists and has to be replaced */
+      here2 = t2;  		/* this is the line we are dealing with */
+      here = t1;   		/* this is the next line */
+      y = here - here2;	/* the length of the line as it is  */
+      if (linelength == y) {     /* no change in line length */
+        moveblock(top - linelength, linelength, here2);
+        top = top - linelength;
+      } else if (linelength > y) { /* the new line is longer than the old one */
+        moveblock(here, top - here, here + linelength - y);
+        here = here + linelength - y;
+        top = top + linelength - y;
+        moveblock(top - linelength, linelength, here2);
+        top = top - linelength;
+      } else {					/* the new line is short than the old one */
+        moveblock(top - linelength, linelength, here2);
+        top = top - linelength;
+        moveblock(here, top - here, here2 + linelength);
+        top = top - y + linelength;
+      }
+    } else {         /* the line has to be inserted in between */
+      here = t1;
+      moveblock(here, top - here, here + linelength);
+      moveblock(top, linelength, here);
+    }
+  }
+}
+
+/*
+   Layer 1 - the code in this section calculates an expression
+   with a recursive descent algorithm
+
+   all function use the stack to pass values back. We use the
+   Backus-Naur form of basic from here https://rosettacode.org/wiki/BNF_Grammar
+   implementing a C style logical expression model
+*/
+
+/* the terminal symbol it ends a statement list - ELSE is one too as it ends a statement list */
+char termsymbol() {
+  return (token == LINENUMBER || token == ':' || token == EOL || token == TELSE);
+}
+
+/* a little helpers - one token expect */
+char expect(token_t t, mem_t e) {
+  nexttoken();
+  if (token != t) {
+    error(e);
+    return 0;
+  } else return 1;
+}
+
+/* a little helpers - expression expect */
+char expectexpr() {
+  nexttoken();
+  expression();
+  if (er != 0) return 0; else return 1;
+}
+
+/* parses a list of expression, this may be recursive! */
+void parsearguments() {
+  short argsl;
+
+  /* begin counting */
+  argsl = 0;
+
+  /* having 0 args at the end of a command is legal */
+  if (!termsymbol()) {
+
+    /* list of expressions separated by commas */
+    do {
+      expression();
+      if (er != 0) break;
+      argsl++;
+      if (token == ',') nexttoken(); else break;
+    } while (1);
+  }
+
+  /* because of the recursion ... */
+  args = argsl;
+}
+
+
+/* expect exactly n arguments */
+void parsenarguments(char n) {
+  parsearguments();
+  if (args != n) error(EARGS);
+}
+
+/* counts and parses the number of arguments given in brakets, this function
+	should not advance to the next token because it is called in factor */
+void parsesubscripts() {
+  blocation_t l;
+
+  args = 0;
+
+  if (DEBUG) {
+    outsc("** in parsesubscripts "); outcr();
+    bdebug("token ");
+  }
+
+  /* remember where we where */
+  pushlocation(&l);
+
+  /* parsesubscripts is called directly after the object in question, it does
+  	nexttoken() itself now */
+  nexttoken();
+
+  /* if we have no bracket here, we return with zero */
+  if (token != '(') {
+    poplocation(&l);
+    return;
+  }
+  nexttoken();
+
+  /* if () we return also with -1 */
+#ifdef HASMULTIDIM
+  if (token == ')') {
+    args = -1;
+    return;
+  }
+#endif
+
+  /* now we are ready to parse a set of arguments */
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+
+  if (token != ')') {
+    error(EARGS);  /* we return with ) as a last token on success */
+    return;
+  }
+
+  /* we end with the ) still as active token */
+}
+
+/* parse a function argument ae is the number of
+	expected expressions in the argument list, parsesubscripts
+	should not avance precisely because it is used in factor */
+
+void parsefunction(void (*f)(), short ae) {
+  parsesubscripts();
+  if (!USELONGJUMP && er) return;
+  if (args == ae) f(); else error(EARGS);
+}
+
+/* helper function in the recursive decent parser */
+void parseoperator(void (*f)()) {
+  mem_t u = 1;
+
+  nexttoken();
+  /* unary minuses in front of an operator are consumed once! */
+  if (token == '-') {
+    u = -1;
+    nexttoken();
+  }
+  /* the operator */
+  f();
+  if (er != 0 ) return;
+  y = pop();
+  if (u == -1) y = -y;
+  x = pop();
+}
+
+/*
+   ABS absolute value
+*/
+void xabs() {
+  number_t x;
+
+  if ((x = pop()) < 0) {
+    x = -x;
+  }
+  push(x);
+}
+
+/*
+   SGN evaluates the sign
+*/
+void xsgn() {
+  number_t x;
+
+  x = pop();
+  if (x > 0) x = 1;
+  if (x < 0) x = -1;
+  push(x);
+}
+
+/*
+   PEEK on an arduino, negative values of peek address
+   the EEPROM range -1 .. -1024 on an UNO
+*/
+void xpeek() {
+  number_t a;
+
+  /* get the argument from the stack because this is a function only */
+  a = pop();
+
+  /* the memory and EEPROM range */
+#ifdef STM32 
+  if (a >= 0 && a <= memsize)
+    push(vcs_memread2(a));
+  else if (a < 0 && -a <= memsize)
+    push(eread(-a - 1));
+#else
+  if (a >= 0 && a <= memsize)
+    push(memread2(a));
+  else if (a < 0 && -a <= elength())
+    push(eread(-a - 1));
+#endif
+  else {
+    error(EORANGE);
+    return;
+  }
+}
+
+/*
+   MAP Arduino map function, we always cast to long, this
+   makes it potable for various integer sizes and the float.
+*/
+void xmap() {
+  long v, in_min, in_max, out_min, out_max;
+
+  out_max = pop();
+  out_min = pop();
+  in_max = pop();
+  in_min = pop();
+  v = pop();
+  push((v - in_min) * (out_max - out_min) / (in_max - in_min) + out_min);
+}
+
+/*
+   RND very basic random number generator with constant seed in 16 bit
+   for float systems, use glibc parameters https://en.wikipedia.org/wiki/Linear_congruential_generator
+*/
+
+void xrnd() {
+  number_t r;
+  mem_t base = randombase;
+
+  /* the argument of the RND() function */
+  r = pop();
+
+  /* this is the microsoft mode, argument <0 resets the sequence, 0 always the same number, > 1 a number between 0 and 1 */
+  if (randombase < 0) {
+    base = 0;
+    if (r < 0) {
+      rd = -r;
+      r = 1;
+    } else if (r == 0) {
+      r = 1;
+      goto pushresult;
+    } else {
+      r = 1;
+    }
+  }
+
+  /* this is the congruence */
+#ifndef HASFLOAT
+  /* the original 16 bit congruence, the & is needed to make it work for all kinds of ints */
+  rd = (31421 * rd + 6927) & 0xffff;
+#else
+  /* glibc parameters */
+  rd = (110351245 * rd + 12345) & 0x7fffffff;
+#endif
+
+pushresult:
+
+  /* the result is calculated with the right modulus */
+#ifndef HASFLOAT
+  if (r >= 0)
+    push((unsigned long)rd * r / 0x10000 + base);
+  else
+    push((unsigned long)rd * r / 0x10000 + 1 - base);
+#else
+  if (r >= 0)
+    push(rd * r / 0x80000000 + base);
+  else
+    push(rd * r / 0x80000000 + 1 - base);
+#endif
+}
+
+
+#ifndef HASFLOAT
+/*
+   SQR - a very simple approximate square root formula
+ 	for integers, for floats we use the library
+*/
+void sqr() {
+  number_t t, r;
+  number_t l = 0;
+
+  r = pop();
+  t = r;
+  while (t > 0) {
+    t >>= 1;
+    l++;
+  }
+  l = l / 2;
+  t = 1;
+  t <<= l;
+  do {
+    l = t;
+    t = (t + r / t) / 2;
+  } while (abs(t - l) > 1);
+  push(t);
+}
+#else
+void sqr() {
+  push(sqrt(pop()));
+}
+#endif
+
+/*
+   POW(X, N) evaluates powers
+*/
+
+/* this function is called by POW(a, c) in BASIC */
+void xpow() {
+  number_t n;
+  number_t a;
+
+  n = pop();
+  a = pop();
+  push(bpow(a, n));
+}
+
+/* while this is needed by ^*/
+number_t bpow(number_t x, number_t y) {
+#ifdef HASFLOAT
+  return pow(x, y);
+#else
+  number_t r;
+  address_t i;
+
+  r = 1;
+  if (y >= 0) for (i = 0; i < y; i++) r *= x;
+  else r = 0;
+  return r;
+#endif
+}
+
+/*
+   the reimplementation of parsestringvar, this code uses a lhsobject
+   to store the data in, which is somehow more natural with the new code.
+
+   The need to handle substring and no substring situations makes thing
+   complex.
+
+   A plain string has the format A$.
+   A substringed string has the format A$(i) or A$(i,j).
+   A string array has the format A$()(i2), A$(i)(i2), A$(i,j)(i2).
+   In the Microsoft world with substringmode==0 we only have
+  	A$, A$(i2).
+
+   All this is distiguished here.
+
+*/
+
+void parsestringvar(string_t* strp, lhsobject_t* lhs) {
+#ifdef HASAPPLE1
+  blocation_t l;
+  address_t temp;
+
+  /* remember the variable name and prep the indices */
+  copyname(&lhs->name, &name);
+  lhs->i = 1; /* we start at 1 */
+  lhs->j = arraylimit; /* we assume a string array of length 1, all simple strings are like this */
+  lhs->i2 = 0; /* we want the full string length */
+  lhs->ps = 1; /* we deal with a pure string */
+
+  /* remember the location */
+  pushlocation(&l);
+
+  /* and inspect the (first) brackets */
+  parsesubscripts();
+  if (!USELONGJUMP && er) return;
+
+  if (DEBUG) {
+    outsc("** in parsestringvar ");
+    outnumber(args);
+    outsc(" arguments \n");
+  }
+
+  /* do we deal with a pure unindexed string or something more complicated */
+  if (args == 0) {
+    /* pure string, we rewind and are done here */
+    poplocation(&l);
+  } else if (!substringmode) {
+    /* we have no substring interpretation hence the brackets can only be one array index */
+    if (args == 1) lhs->j = pop(); else {
+      error(EORANGE);
+      return;
+    }
+  } else {
+    /* not a pure string */
+    lhs->ps = 0;
+    /* we are in the substring world here */
+    if (args == 2) {
+      lhs->i2 = popaddress();  /* A$(i,j) */
+      args--;
+    }
+    if (!USELONGJUMP && er) return;
+    if (args == 1) {
+      lhs->i = popaddress();  /* A$(i) */
+    }
+    if (!USELONGJUMP && er) return;
+    if (args == -1) {}	/* A$(), ignore */
+    /* here we have parsed a full substring and remember where we are and look forward*/
+    pushlocation(&l);
+    nexttoken();
+    if (token == '(') {
+      /* a second pair of braces is coming, we parse an array index */
+      nexttoken();
+      expression();
+      if (!USELONGJUMP && er) return;
+      if (token != ')') {
+        error(EUNKNOWN);
+        return;
+      }
+      lhs->j = popaddress();
+      if (!USELONGJUMP && er) return;
+    } else
+      poplocation(&l);
+  }
+
+  /* in pure parse mode we end here. This is used for the lefthandside code */
+  if (!strp) return;
+
+  /* try to get the string */
+  getstring(strp, &lhs->name, lhs->i, lhs->j);
+  if (!USELONGJUMP && er) return;
+
+  /* look what we do with the upper index */
+  if (!lhs->i2) lhs->i2 = strp->length;
+
+  if (DEBUG) {
+    outsc("** in parsestringvar lower is "); outnumber(lhs->i); outcr();
+    outsc("** in parsestringvar upper is "); outnumber(lhs->i2); outcr();
+    outsc("** in parsestringvar array_index is "); outnumber(lhs->j); outcr();
+  }
+
+  /* find the length */
+  if (lhs->i2 - lhs->i + 1 > 0) strp->length = lhs->i2 - lhs->i + 1; else strp->length = 0;
+
+  /* done */
+  if (DEBUG) {
+    outsc("** in parsestringvar, length ");
+    outnumber(strp->length);
+    outsc(" from "); outnumber(lhs->i); outspc(); outnumber(lhs->i2);
+    outcr();
+  }
+
+  /* restore the name */
+  name = lhs->name;
+#else
+  return;
+#endif
+}
+
+
+/*
+   stringvalue(string_t*) evaluates a string value, return 0 if there is no string,
+  	1 if there is a string. The pointer contains all the data needed to process the string.
+
+   In STR all number bases are allowed now.
+
+*/
+
+char stringvalue(string_t* strp) {
+  address_t k, l;
+  address_t i;
+  token_t t;
+  mem_t args = 1;
+
+  lhsobject_t lhs;
+
+#ifdef HASNUMSYSTEM
+  mem_t base = 10;
+  number_t n;
+#endif
+
+  if (DEBUG) outsc("** entering stringvalue \n");
+
+  /* make sure everything is nice and clean */
+  strp->address = 0;
+  strp->arraydim = 0;
+  strp->length = 0;
+  strp->strdim = 0;
+  strp->ir = 0;
+
+  switch (token) {
+    case STRING:
+      /* sr has the string information from gettoken and nexttoken*/
+      strp->ir = sr.ir;
+      strp->length = sr.length;
+      strp->address = sr.address;
+      break;
+#ifdef HASAPPLE1
+    case STRINGVAR:
+      parsestringvar(strp, &lhs);
+      break;
+    case TSTR:
+      nexttoken();
+      if (token == '$') nexttoken();
+      if (token != '(') {
+        error(EARGS);
+        return 0;
+      }
+      nexttoken();
+      expression();
+      if (er != 0) return 0;
+#ifdef HASNUMSYSTEM
+      if (token == ',') {
+        nexttoken();
+        expression();
+        if (er != 0) return 0;
+        base = pop();
+      }
+      n = pop();
+#ifdef HASFLOAT
+      if (base == 10) {
+        strp->length = writenumber2(sbuffer, n);
+      } else {
+        n = floor(n);
+        strp->length = writenumbern(sbuffer, n, base);
+      }
+#else
+      strp->length = writenumbern(sbuffer, n, base);
+#endif
+#else
+#ifdef HASFLOAT
+      strp->length = writenumber2(sbuffer, pop());
+#else
+      strp->length = writenumber(sbuffer, pop());
+#endif
+#endif
+      strp->ir = sbuffer;
+      if (er != 0) return 0;
+      if (token != ')') {
+        error(EARGS);
+        return 0;
+      }
+      break;
+#ifdef HASMSSTRINGS
+    case TCHR:
+      nexttoken();
+      if (token == '$') nexttoken();
+      if (token != '(') {
+        error(EARGS);
+        return 0;
+      }
+      nexttoken();
+      expression();
+      if (er != 0) return 0;
+      *sbuffer = pop();
+      strp->ir = sbuffer;
+      strp->length = 1;
+      if (token != ')') {
+        error(EARGS);
+        return 0;
+      }
+      break;
+    case TRIGHT:
+    case TMID:
+    case TLEFT:
+      t = token;
+      nexttoken();
+      if (token == '$') nexttoken();
+      if (token != '(') {
+        error(EARGS);
+        return 0;
+      }
+      nexttoken();
+      if (token != STRINGVAR) {
+        error(EARGS);
+        return 0;
+      }
+      parsestringvar(strp, &lhs);
+      if (er != 0) return 0;
+      k = strp->length; /* the length of the original string variable */
+      nexttoken();
+      if (token != ',') {
+        error(EARGS);
+        return 0;
+      }
+      nexttoken();
+      expression();
+      if (er != 0) return 0;
+      /* all the rest depends on the function */
+      switch (t) {
+        case TRIGHT:
+          l = popaddress();
+          if (k < l) l = k;
+          if (strp->address) strp->address = strp->address + (k - l);
+          if (strp->ir) strp->ir = strp->ir + (k - l);
           break;
-        } else if (ch=='\t') {
-          Debugging = (Debugging+DEBUGON)&1;    /* maybe toggle debug */
-          ch = ' ';                          /* convert tabs to space */
-        } else if (ch==(char)Core[BScode]) {        /* backspace code */
-          if (InLend>InLine) InLend--;      /* assume console already */
-          else {     /* backing up over front of line: just kill it.. */
-            Ouch('\r');
-            ILPC++;
-            break;
+        case TLEFT:
+          l = popaddress();
+          if (k < l) l = k;
+          break;
+        case TMID:
+          if (token == ',') {
+            nexttoken();
+            expression();
+            if (er != 0) return 0;
+            args++;
           }
-        } else if (ch==(char)Core[CanCode]) {     /* cancel this line */
-          InLend = InLine;
-          Ouch('\r');                  /* also start a new input line */
-          ILPC++;
+          if (args == 1) {
+            i = popaddress();
+            l = 0;
+            if (i <= k) l = k - i + 1;
+          } else {
+            l = popaddress();
+            if (er != 0) return 0;
+            i = popaddress();
+          }
+          if (i == 0) i = 1;
+          if (i > k) l = 0;
+          if (k < i + l) l = k - i + 1;
+          if (l < 0) l = 0;
+          if (strp->address != 0) strp->address = strp->address + i - 1;
+          if (strp->ir) strp->ir = strp->ir + i - 1;;
           break;
-        } else if (ch<' ' || ch>'~') { /* ignore non-ASCII & controls */
-            break;
-        }
-        if (InLend<ExpnTop-1) {              /* discard overrun chars */
-          Core[InLend++] = (aByte)ch;   /* insert this char in buffer */
-        }
+      }
+      strp->length = l;
+
+      if (token != ')') {
+        error(EARGS);
+        return 0;
+      }
+      break;
+#endif
+#endif
+    default:
+      return 0;
+  }
+  return 1;
+}
+
+
+/*
+   (numerical) evaluation of a string expression, used for
+   comparison and for string rightvalues as numbers
+   the token rewind here is needed as streval is called in
+   factor - no factor function should nexttoken
+*/
+
+void streval() {
+  token_t t;
+  address_t k;
+  string_t s1, s2;
+  char* ir;
+  address_t a;
+  blocation_t l;
+
+  /* is the right side of the expression a string */
+  if (!stringvalue(&s1)) {
+    error(EUNKNOWN);
+    return;
+  }
+  if (!USELONGJUMP && er) return;
+
+  if (DEBUG) {
+    outsc("** in streval first string");
+    outcr();
+  }
+
+  /* get ready for rewind to this location */
+  pushlocation(&l);
+  t = token;
+
+  /* is the next token a operator, hence we need to compare two strings? */
+  nexttoken();
+  if (token != '=' && token != NOTEQUAL) {
+
+    /* if not, rewind one token and evaluate the string as a boolean */
+    poplocation(&l);
+    token = t;
+
+    /* a zero length string evaluates to zero else to the first character */
+    if (s1.length == 0) push(0); else {
+      if (s1.ir) push(s1.ir[0]);
+      else if (s1.address) push(memread2(s1.address));
+      else error(EGENERAL);
+    }
+
+    return;
+  }
+
+  /* remember which operator we use */
+  t = token;
+
+  /* questionable !! */
+  nexttoken();
+
+  if (DEBUG) {
+    outsc("** in streval second string"); outcr();
+    debugtoken(); outcr();
+  }
+
+  /* get the second string */
+  if (!stringvalue(&s2)) {
+    error(EUNKNOWN);
+    return;
+  }
+  if (!USELONGJUMP && er) return;
+
+  if (DEBUG) {
+    outsc("** in streval result: ");
+    outnumber(x);
+    outcr();
+  }
+
+  /* different length means unequal */
+  if (s2.length != s1.length) goto neq;
+
+  /* and a different character somewhere is also unequal */
+#ifdef USEMEMINTERFACE
+  if (s1.ir && s2.ir)
+    for (k = 0; k < s1.length; k++) {
+      if (s1.ir[k] != s2.ir[k]) goto neq;
+    }
+  else if (s1.address && s2.address)
+    for (k = 0; k < s1.length; k++) {
+      if (memread2(s1.address + k) != memread2(s2.address + k)) goto neq;
+    }
+  else {
+    if (s1.address) {
+      a = s1.address;
+      ir = s2.ir;
+    } else {
+      a = s2.address;
+      ir = s1.ir;
+    }
+    for (k = 0; k < s1.length; k++) {
+      if (memread2(a + k) != ir[k] ) goto neq;
+    }
+  }
+#else
+  for (k = 0; k < s1.length; k++) if (s1.ir[k] != s2.ir[k]) goto neq;
+#endif
+
+  /* which operator did we use */
+  if (t == '=') push(booleanmode); else push(0);
+  return;
+neq:
+  if (t == '=') push(0); else push(booleanmode);
+  return;
+}
+
+
+#ifdef HASFLOAT
+/*
+   floating point arithmetic
+   SIN, COS, TAN, ATAN, LOG, EXP, INT
+   INT is always there and is nop in integer BASICs
+   no handling of floating point errors yet.
+*/
+void xsin() {
+  push(sin(pop()));
+}
+void xcos() {
+  push(cos(pop()));
+}
+void xtan() {
+  push(tan(pop()));
+}
+void xatan() {
+  push(atan(pop()));
+}
+void xlog() {
+  push(log(pop()));
+}
+void xexp() {
+  push(exp(pop()));
+}
+void xint() {
+  push(floor(pop()));
+}
+#else
+void xint() {}
+#endif
+
+/* this function does a bitwise compare. It checks if one bit is 1 or 0 and returns
+	the right BASIC boolean value */
+void xbit() {
+  int a, b;
+
+  /* this is slightly unclean as we do no error detection on the range */
+  b = (int)pop();
+  a = (int)pop();
+
+  /* pushing booleanmode makes sure we have the right kind of true (1 or -1) */
+  if (a & (1 << b)) push(booleanmode); else push(0);
+}
+
+/*
+   Recursive expression parser functions
+
+   factor(); term(); addexpression(); compexpression();
+   notexpression(); andexpression(); expression()
+
+   doing
+
+   functions, numbers; *, /, %; +, -; =, <>, =>, <=;
+   NOT; AND; OR
+
+*/
+
+/*
+ 	factor() - contrary to all other function
+ 	nothing here should end with a new token - this is handled
+ 	in factors calling function
+
+   evaluates constants, variables and all functions
+*/
+
+/* helpers of factor - array access */
+void factorarray() {
+  lhsobject_t object;
+  number_t v;
+
+  /* remember the variable, because parsesubscript changes this */
+  copyname(&object.name, &name);
+
+  /* parse the arguments */
+  parsesubscripts();
+  if (er != 0 ) return;
+
+  switch (args) {
+    case 1:
+      object.i = popaddress();
+      if (!USELONGJUMP && er) return;
+      object.j = arraylimit;
+      break;
+#ifdef HASMULTIDIM
+    case 2:
+      object.j = popaddress();
+      object.i = popaddress();
+      if (!USELONGJUMP && er) return;
+      break;
+#endif
+    default:
+      error(EARGS);
+      return;
+  }
+  array(&object, 'g', &v);
+  push(v);
+}
+
+/* helpers of factor - string length */
+void factorlen() {
+#ifdef HASAPPLE1
+  address_t a;
+  string_t s;
+  name_t n;
+  lhsobject_t lhs;
+
+  nexttoken();
+  if ( token != '(') {
+    error(EARGS);
+    return;
+  }
+
+  nexttoken();
+  switch (token) {
+    case STRING:
+      push(sr.length);
+      nexttoken();
+      break;
+    case STRINGVAR:
+      parsestringvar(&s, &lhs);
+      push(s.length);
+      nexttoken();
+      break;
+#ifdef HASMSSTRINGS
+    case TRIGHT:
+    case TLEFT:
+    case TMID:
+    case TCHR:
+#endif
+    case TSTR:
+      error(EARGS);
+      return;
+    default:
+      expression();
+      if (!USELONGJUMP && er) return;
+      n.token = TBUFFER;
+      a = pop();
+      n.c[0] = a % 256;
+      n.c[1] = a / 256;
+      push(blength(&n));
+  }
+
+  if (!USELONGJUMP && er) return;
+
+  if (token != ')') {
+    error(EARGS);
+    return;
+  }
+#else
+  push(0);
+#endif
+}
+
+/* helpers of factor - the VAL command */
+void factorval() {
+  index_t y;
+  number_t x;
+  string_t s;
+  address_t a;
+  char *ir;
+
+#define DEBUG 0
+
+  mem_t numsys = 0;
+
+
+  nexttoken();
+  if (token != '(') {
+    error(EARGS);
+    return;
+  }
+
+  nexttoken();
+  if (!stringvalue(&s)) {
+    error(EUNKNOWN);
+    return;
+  }
+  if (!USELONGJUMP && er) return;
+
+  /* the length of the strings consumed */
+  vlength = 0;
+
+  /* get the string if it is in serial memory */
+#ifdef USEMEMINTERFACE
+  if (!s.ir) getstringtobuffer(&s, spistrbuf1, SPIRAMSBSIZE);
+#endif
+
+  /* generate a 0 terminated string for use with parsenumber */
+  stringtobuffer(sbuffer, &s);
+  ir = sbuffer;
+
+  if (DEBUG) {
+    outsc("factorval: ");
+    outsc(ir);
+    outcr();
+  }
+
+  /* remove whitespaces */
+  while (*ir == ' ' || *ir == '\t') {
+    ir++;
+    vlength++;
+  }
+
+  /* find a sign */
+  if (*ir == '-') {
+    y = -1;
+    ir++;
+    vlength++;
+  } else y = 1;
+
+  /* see if we scan integer hex, octal or bin constants, the real scanning is done in parsenumbern */
+#ifdef HASNUMSYSTEM
+  if (*ir == '0' && ( *(ir + 1) == 'x' || *(ir + 1) == 'X' || *(ir + 1) == 'b' || *(ir + 1) == 'B' \
+                      || *(ir + 1) == 'o' || *(ir + 1) == 'O' )) {
+    numsys = 1;
+  }
+#endif
+
+  if (DEBUG) {
+    outsc("factorval: ");
+    outsc(ir);
+    outsc(" ");
+    outnumber(y);
+    outsc(" ");
+    outnumber(numsys);
+    outcr();
+  }
+#define DEBUG 0
+
+  x = 0;
+#ifdef HASFLOAT
+#ifdef HASNUMSYSTEM
+  if (numsys) {
+    if ((a = parsenumbern(ir, &x)) > 0) {
+      vlength += a;
+      ert = 0;
+    } else {
+      vlength = 0;
+      ert = 1;
+    };
+  } else {
+    if ((a = parsenumber2(ir, &x)) > 0) {
+      vlength += a;
+      ert = 0;
+    } else {
+      vlength = 0;
+      ert = 1;
+    };
+  }
+#else
+  if ((a = parsenumber2(ir, &x)) > 0) {
+    vlength += a;
+    ert = 0;
+  } else {
+    vlength = 0;
+    ert = 1;
+  };
+#endif
+#else
+#ifdef HASNUMSYSTEM
+  if (numsys) {
+    if ((a = parsenumbern(ir, &x)) > 0) {
+      vlength += a;
+      ert = 0;
+    } else {
+      vlength = 0;
+      ert = 1;
+    };
+  } else {
+    if ((a = parsenumber(ir, &x)) > 0) {
+      vlength += a;
+      ert = 0;
+    } else {
+      vlength = 0;
+      ert = 1;
+    };
+  }
+#else
+  if ((a = parsenumber(ir, &x)) > 0) {
+    vlength += a;
+    ert = 0;
+  } else {
+    vlength = 0;
+    ert = 1;
+  };
+#endif
+#endif
+  push(x * y);
+
+  nexttoken();
+  if (token != ')') {
+    error(EARGS);
+    return;
+  }
+}
+
+/* helpers of factor - the INSTR command */
+#ifndef HASFULLINSTR
+/* this is instring in a single character version, usefull to split strings */
+void factorinstr() {
+  char ch;
+  address_t a;
+  string_t s;
+
+  nexttoken();
+  if (token != '(') {
+    error(EARGS);
+    return;
+  }
+
+  nexttoken();
+  if (!stringvalue(&s)) {
+    error(EUNKNOWN);
+    return;
+  }
+  if (!USELONGJUMP && er) return;
+  nexttoken();
+
+  if (token != ',') {
+    error(EARGS);
+    return;
+  }
+
+  nexttoken();
+  expression();
+  if (!USELONGJUMP && er) return;
+
+  ch = pop();
+  if (s.address) {
+    for (a = 1; a <= s.length; a++) {
+      if (memread2(s.address + a - 1) == ch) break;
+    }
+  } else {
+    for (a = 1; a <= s.length; a++) {
+      if (s.ir[a - 1] == ch) break;
+    }
+  }
+  if (a > s.length) a = 0;
+  push(a);
+  //nexttoken();
+  if (token != ')') {
+    error(EARGS);
+    return;
+  }
+}
+#else
+/* the full instr command which can compare two strings  */
+void factorinstr() {
+  char ch;
+  address_t a = 1;
+  address_t i = 1;
+  string_t search;
+  string_t s;
+
+  nexttoken();
+  if (token != '(') {
+    error(EARGS);
+    return;
+  }
+  nexttoken();
+
+  /* the search string */
+  if (!stringvalue(&s)) {
+    error(EUNKNOWN);
+    return;
+  }
+  if (!USELONGJUMP && er) return;
+  nexttoken();
+
+  if (token != ',') {
+    error(EARGS);
+    return;
+  }
+  nexttoken();
+
+  /* the string to be searched */
+  if (!stringvalue(&search)) {
+    error(EUNKNOWN);
+    return;
+  }
+  if (!USELONGJUMP && er) return;
+  nexttoken();
+
+  /* potentially the start value */
+  if (token == ',') {
+    nexttoken();
+    expression();
+    if (!USELONGJUMP && er) return;
+
+    a = popaddress();
+    if (!USELONGJUMP && er) return;
+  }
+
+  if (token != ')') {
+    error(EUNKNOWN);
+    return;
+  }
+
+  /* health check */
+  if (search.length == 0 || search.length + a > s.length || a == 0) {
+    push(0);
+    return;
+  }
+
+  /* go through the search string */
+  while (i <= search.length) {
+
+    /* get one character from the string */
+    if (search.address) {
+      ch = memread2(search.address + i - 1);
+    } else {
+      ch = search.ir[i - 1];
+    }
+
+    /* search the character */
+    if (s.address) {
+      for (; a <= s.length; a++) {
+        if (memread2(s.address + a - 1) == ch) break;
+      }
+    } else {
+      for (; a <= s.length; a++) {
+        if ( s.ir[a - 1] == ch ) break;
+      }
+    }
+
+    /* we haven't found the character until the end of the string */
+    if (a > s.length) {
+      a = 0;
+      break;
+    }
+
+    /* next character */
+    i += 1;
+
+  }
+
+  /* how did the search go? a rewind because we were at the end of the search part already */
+  if (i <= search.length) {
+    a = 0;
+  } else {
+    a = a - search.length + 1;
+  }
+
+
+  push(a);
+}
+#endif
+
+/* helpers of factor - the NETSTAT command */
+void factornetstat() {
+  address_t x = 0;
+
+  if (netconnected()) x = 1;
+  if (mqttstate() == 0) x += 2;
+  push(x);
+}
+
+/* helpers of factor - the ASC command, really not needed but for completeness */
+void factorasc() {
+#ifdef HASAPPLE1
+  string_t s;
+  lhsobject_t lhs;
+
+  nexttoken();
+  if ( token != '(') {
+    error(EARGS);
+    return;
+  }
+
+  nexttoken();
+  switch (token) {
+    case STRING:
+      if (sr.ir) push(sr.ir[0]); else push(memread2(sr.address));
+      nexttoken();
+      break;
+    case STRINGVAR:
+      parsestringvar(&s, &lhs);
+      if (s.length > 0) {
+        if (s.ir) push(s.ir[0]); else push(memread2(s.address));
+      } else
+        push(0);
+      nexttoken();
+      break;
+    default:
+      error(EARGS);
+      return;
+  }
+
+  if (!USELONGJUMP && er) return;
+
+  if (token != ')') {
+    error(EARGS);
+    return;
+  }
+#else
+  push(0);
+#endif
+}
+
+void factor() {
+  if (DEBUG) bdebug("factor\n");
+  switch (token) {
+    case NUMBER:
+      push(x);
+      break;
+    case VARIABLE:
+      push(getvar(&name));
+      break;
+    case ARRAYVAR:
+      factorarray();
+      break;
+    case '(':
+      nexttoken();
+      expression();
+      if (er != 0 ) return;
+      if (token != ')') {
+        error(EARGS);
+        return;
+      }
+      break;
+    /* Palo Alto BASIC functions */
+    case TABS:
+      parsefunction(xabs, 1);
+      break;
+    case TRND:
+      parsefunction(xrnd, 1);
+      break;
+    case TSIZE:
+      push(himem - top);
+      break;
+      /* Apple 1 BASIC functions */
+#ifdef HASAPPLE1
+    case TSGN:
+      parsefunction(xsgn, 1);
+      break;
+    case TPEEK:
+      parsefunction(xpeek, 1);
+      break;
+    case TLEN:
+      factorlen();
+      break;
+#ifdef HASIOT
+    case TAVAIL:
+      parsefunction(xavail, 1);
+      break;
+    case TOPEN:
+      parsefunction(xfopen, 1);
+      break;
+    case TSENSOR:
+      parsefunction(xfsensor, 2);
+      break;
+    case TVAL:
+      factorval();
+      break;
+    case TINSTR:
+      factorinstr();
+      break;
+    case TWIRE:
+      parsefunction(xfwire, 1);
+      break;
+#endif
+#ifdef HASERRORHANDLING
+    case TERROR:
+      push(erh);
+      break;
+#endif
+    case THIMEM:
+      push(himem);
+      break;
+    /* Apple 1 string compare code */
+    case STRING:
+    case STRINGVAR:
+#ifdef HASIOT
+    case TSTR:
+#endif
+#ifdef HASMSSTRINGS
+    case TLEFT:
+    case TRIGHT:
+    case TMID:
+    case TCHR:
+#endif
+      streval();
+      if (er != 0 ) return;
+      break;
+#endif
+      /*  Stefan's tinybasic additions */
+#ifdef HASSTEFANSEXT
+    case TSQR:
+      parsefunction(sqr, 1);
+      break;
+    case TMAP:
+      parsefunction(xmap, 5);
+      break;
+    case TPOW:
+      parsefunction(xpow, 2);
+      break;
+#endif
+#ifdef HASUSRCALL
+    case TUSR:
+      parsefunction(xusr, 2);
+      break;
+#endif
+      /* Arduino I/O */
+#ifdef HASARDUINOIO
+    case TAREAD:
+      parsefunction(xaread, 1);
+      break;
+    case TDREAD:
+      parsefunction(xdread, 1);
+      break;
+    case TMILLIS:
+      parsefunction(bmillis, 1);
+      break;
+#ifdef HASPULSE
+    case TPULSE:
+      parsefunction(bpulsein, 3);
+      break;
+#endif
+    case TAZERO:
+#if defined(ARDUINO) && defined(A0)
+      push(A0);
+#else
+      push(0);
+#endif
+      break;
+    case TLED:
+#ifdef LED_BUILTIN
+      push(LED_BUILTIN);
+#else
+      push(0);
+#endif
+      break;
+#endif
+      /* mathematical functions in case we have float */
+#ifdef HASFLOAT
+    case TSIN:
+      parsefunction(xsin, 1);
+      break;
+    case TCOS:
+      parsefunction(xcos, 1);
+      break;
+    case TTAN:
+      parsefunction(xtan, 1);
+      break;
+    case TATAN:
+      parsefunction(xatan, 1);
+      break;
+    case TLOG:
+      parsefunction(xlog, 1);
+      break;
+    case TEXP:
+      parsefunction(xexp, 1);
+      break;
+#endif
+    /* int is always present to make programs compatible */
+    case TINT:
+      parsefunction(xint, 1);
+      break;
+#ifdef HASDARTMOUTH
+    case TFN:
+      xfn(0);
+      break;
+    /* an arcane feature, DATA evaluates to the data record number */
+    case TDATA:
+      push(datarc);
+      break;
+#endif
+#ifdef HASDARKARTS
+    case TMALLOC:
+      parsefunction(xmalloc, 2);
+      break;
+    case TFIND:
+      xfind();
+      break;
+#endif
+#ifdef HASIOT
+    case TNETSTAT:
+      factornetstat();
+      break;
+#endif
+#ifdef HASMSSTRINGS
+    case TASC:
+      factorasc();
+      break;
+#endif
+    case TBIT:
+      parsefunction(xbit, 2);
+      break;
+    /* unknown function */
+    default:
+      error(EUNKNOWN);
+      return;
+  }
+}
+
+/* this is how the power operator ^ is handled */
+#ifdef POWERRIGHTTOLEFT
+/* the recursive version */
+void power() {
+  if (DEBUG) bdebug("power\n");
+  factor();
+  if (!USELONGJUMP && er) return;
+
+  nexttoken();
+  if (DEBUG) bdebug("in power\n");
+  if (token == '^') {
+    parseoperator(power);
+    if (!USELONGJUMP && er) return;
+    push(bpow(x, y));
+  }
+  if (DEBUG) bdebug("leaving power\n");
+}
+#else
+/* the left associative version */
+void power() {
+  if (DEBUG) bdebug("power\n");
+  factor();
+  if (!USELONGJUMP && er) return;
+
+nextpower:
+  nexttoken();
+  if (DEBUG) bdebug("in power\n");
+  if (token == '^') {
+    parseoperator(factor);
+    push(bpow(x, y));
+    goto nextpower;
+  }
+  if (DEBUG) bdebug("leaving power\n");
+}
+#endif
+
+/*
+ * term() evaluates powers, multiplication, division and mod.
+ * There are two versions, one with a power operator ^ and one without.
+ */
+#ifdef HASPOWER
+void term() {
+  if (DEBUG) bdebug("term\n");
+  power();
+  if (!USELONGJUMP && er) return;
+
+nextfactor:
+  if (DEBUG) bdebug("in term\n");
+  if (token == '*') {
+    parseoperator(power);
+    if (!USELONGJUMP && er) return;
+    push(x * y);
+    goto nextfactor;
+  } else if (token == '/') {
+    parseoperator(power);
+    if (!USELONGJUMP && er) return;
+    if (y != 0)
+#ifndef HASFLOAT
+      push(x / y);
+#else
+        if (forceint) push((int)x / (int)y); else push(x / y);
+#endif
+    else {
+      error(EDIVIDE);
+      return;
+    }
+    goto nextfactor;
+  } else if (token == '%') {
+    parseoperator(power);
+    if (!USELONGJUMP && er) return;
+    if (y != 0)
+#ifndef HASFLOAT
+      push(x % y);
+#else
+      push((int)x % (int)y);
+#endif
+    else {
+      error(EDIVIDE);
+      return;
+    }
+    goto nextfactor;
+  } else if (token == TSHL) {
+    parseoperator(power);
+    if (!USELONGJUMP && er) return;
+    push((int)x << (int)y);
+    goto nextfactor;
+  } else if (token == TSHR) {
+    parseoperator(power);
+    if (!USELONGJUMP && er) return;
+    push((int)x >> (int)y);
+    goto nextfactor;
+  }
+  if (DEBUG) bdebug("leaving term\n");
+}
+#else 
+void term() {
+  if (DEBUG) bdebug("term\n");
+  factor();
+  if (!USELONGJUMP && er) return;
+
+nextfactor:
+  nexttoken();
+  if (DEBUG) bdebug("in term\n");
+  if (token == '*') {
+    parseoperator(factor);
+    if (!USELONGJUMP && er) return;
+    push(x * y);
+    goto nextfactor;
+  } else if (token == '/') {
+    parseoperator(factor);
+    if (!USELONGJUMP && er) return;
+    if (y != 0)
+#ifndef HASFLOAT
+      push(x / y);
+#else
+        if (forceint) push((int)x / (int)y); else push(x / y);
+#endif
+    else {
+      error(EDIVIDE);
+      return;
+    }
+    goto nextfactor;
+  } else if (token == '%') {
+    parseoperator(factor);
+    if (!USELONGJUMP && er) return;
+    if (y != 0)
+#ifndef HASFLOAT
+      push(x % y);
+#else
+      push((int)x % (int)y);
+#endif
+    else {
+      error(EDIVIDE);
+      return;
+    }
+    goto nextfactor;
+  } else if (token == TSHL) {
+    parseoperator(factor);
+    if (!USELONGJUMP && er) return;
+    push((int)x << (int)y);
+    goto nextfactor;
+  } else if (token == TSHR) {
+    parseoperator(factor);
+    if (!USELONGJUMP && er) return;
+    push((int)x >> (int)y);
+    goto nextfactor;
+  }
+  if (DEBUG) bdebug("leaving term\n");
+}
+
+
+
+#endif
+
+/* add and subtract */
+void addexpression() {
+  if (DEBUG) bdebug("addexp\n");
+  if (token != '+' && token != '-') {
+    term();
+    if (!USELONGJUMP && er) return;
+  } else {
+    push(0);
+  }
+
+nextterm:
+  if (token == '+' ) {
+    parseoperator(term);
+    if (!USELONGJUMP && er) return;
+    push(x + y);
+    goto nextterm;
+  } else if (token == '-') {
+    parseoperator(term);
+    if (!USELONGJUMP && er) return;
+    push(x - y);
+    goto nextterm;
+  }
+}
+
+/* comparisions */
+void compexpression() {
+  if (DEBUG) bdebug("compexp\n");
+  addexpression();
+  if (!USELONGJUMP && er) return;
+  switch (token) {
+    case '=':
+      parseoperator(compexpression);
+      if (!USELONGJUMP && er) return;
+#ifndef HASFLOAT
+      push(x == y ? booleanmode : 0);
+#else
+      if (fabs(x - y) <= epsilon) push(booleanmode); else push(0);
+#endif
+      break;
+    case NOTEQUAL:
+      parseoperator(compexpression);
+      if (!USELONGJUMP && er) return;
+#ifndef HASFLOAT
+      push(x != y ? booleanmode : 0);
+#else
+      if (fabs(x - y) > epsilon) push(booleanmode); else push(0);
+#endif
+      break;
+    case '>':
+      parseoperator(compexpression);
+      if (!USELONGJUMP && er) return;
+      push(x > y ? booleanmode : 0);
+      break;
+    case '<':
+      parseoperator(compexpression);
+      if (!USELONGJUMP && er) return;
+      push(x < y ? booleanmode : 0);
+      break;
+    case LESSEREQUAL:
+      parseoperator(compexpression);
+      if (!USELONGJUMP && er) return;
+      push(x <= y ? booleanmode : 0);
+      break;
+    case GREATEREQUAL:
+      parseoperator(compexpression);
+      if (!USELONGJUMP && er) return;
+      push(x >= y ? booleanmode : 0);
+      break;
+  }
+}
+
+#ifdef HASAPPLE1
+/* boolean NOT */
+void notexpression() {
+  if (DEBUG) bdebug("notexp\n");
+  if (token == TNOT) {
+    nexttoken();
+    expression();
+    if (!USELONGJUMP && er) return;
+    if (booleanmode == -1) push(~(short)pop());
+    else if (pop() == 0) push(1); else push(0);
+  } else
+    compexpression();
+}
+
+/* boolean AND and at the same time bitwise */
+void andexpression() {
+  if (DEBUG) bdebug("andexp\n");
+  notexpression();
+  if (!USELONGJUMP && er) return;
+  if (token == TAND) {
+    parseoperator(expression);
+    if (!USELONGJUMP && er) return;
+    push((short)x & (short)y);
+  }
+}
+
+/* expression function and boolean OR at the same time bitwise !*/
+void expression() {
+  if (DEBUG) bdebug("exp\n");
+  andexpression();
+  if (!USELONGJUMP && er) return;
+  if (token == TOR) {
+    parseoperator(expression);
+    if (!USELONGJUMP && er) return;
+    push((short)x | (short)y);
+  }
+}
+#else
+
+/* expression function simplified */
+void expression() {
+  if (DEBUG) bdebug("exp\n");
+  compexpression();
+  if (!USELONGJUMP && er) return;
+  if (token == TOR) {
+    parseoperator(expression);
+    if (!USELONGJUMP && er) return;
+    push((short)x | (short)y);
+  }
+}
+#endif
+
+/*
+   Layer 2 - The commands and their helpers
+
+   Palo Alto BASIC languge set - PRINT, LET, INPUT, GOTO, GOSUB, RETURN,
+     	IF, FOR, TO, NEXT, STEP, BREAK, STOP, END, LIST, NEW, RUN, REM
+     	BREAK is not Palo ALto but fits here, eEND is identical to STOP.
+*/
+
+/*
+ 	PRINT command, extended by many features like file, wire, mqtt and radio i/o.
+    TAB added as part of the PRINT statement with C64 compatibility.
+*/
+void xprint() {
+  char semicolon = 0;
+  char oldod;
+  char modifier = 0;
+  string_t s;
+  stringlength_t i;
+
+  form = 0;
+  oldod = od;
+  nexttoken();
+
+processsymbol:
+  /* at the end of a print statement, do we need a newline, restore the defaults */
+  if (termsymbol()) {
+    if (!semicolon) outcr();
+    od = oldod;
+    form = 0;
+    return;
+  }
+  semicolon = 0;
+
+  /* output a string if we found it */
+  if (stringvalue(&s)) {
+    if (!USELONGJUMP && er) return;
+
+    /* buffer must be used here for machine code to work */
+#ifdef USEMEMINTERFACE
+    if (!s.ir) getstringtobuffer(&s, spistrbuf1, SPIRAMSBSIZE);
+#endif
+    outs(s.ir, s.length);
+
+    nexttoken();
+    goto separators;
+  }
+
+  /* the tab command as part of print */
+#ifdef HASMSSTRINGS
+  if (token == TTAB || token == TSPC) {
+    xtab();
+    goto separators;
+  }
+#endif
+
+  /* modifiers of the print statement */
+  if (token == '#' || token == '&') {
+    modifier = token;
+    nexttoken();
+    expression();
+    if (!USELONGJUMP && er) return;
+
+    switch (modifier) {
+      case '#':
+        form = pop();
         break;
-
-/* IL      2A      Insert BASIC Line.                                 */
-/*                 Beginning with the current position of the BASIC   */
-/* pointer and continuing to the [end of it], the line is inserted    */
-/* into the BASIC program space; for a line number, the top two bytes */
-/* of the expression stack are used. If this number matches a line    */
-/* already in the program it is deleted and the new one replaces it.  */
-/* If the new line consists of only a carriage return, it is not      */
-/* inserted, though any previous line with the same number will have  */
-/* been deleted. The lines are maintained in the program space sorted */
-/* by line number. If the new line to be inserted is a different size */
-/* than the old line being replaced, the remainder of the program is  */
-/* shifted over to make room or to close up the gap as necessary. If  */
-/* there is insufficient memory to fit in the new line, the program   */
-/* space is unchanged and an error stop occurs (with the IL address   */
-/* decremented). A normal error stop occurs on expression stack       */
-/* underflow or if the number is zero, which is not a valid line      */
-/* number. After completing the insertion, the IL program is          */
-/* restarted in the command mode.                                     */
-      case 42:
-        Lino = PopExInt();                              /* get line # */
-        if (Lino <= 0) {          /* don't insert line #0 or negative */
-          if (ILPC != 0) TBerror(17);
-            else return;
-          break;}
-        while (((char)Core[BP]) == ' ') BP++;  /* skip leading spaces */
-        if (((char)Core[BP]) == '\r') ix = 0;       /* nothing to add */
-          else ix = InLend-BP+2;         /* the size of the insertion */
-        op = 0;         /* this will be the number of bytes to delete */
-        chpt = FindLine(Lino);             /* try to find this line.. */
-        if (Peek2(chpt) == Lino)       /* there is a line to delete.. */
-          op = (SkipTo(chpt+2, '\r')-chpt);
-        if (ix == 0) if (op==0) {  /* nothing to add nor delete; done */
-          Lino = 0;
-          break;}
-        op = ix-op;      /* = how many more bytes to add or (-)delete */
-        if (SrcEnd+op>=SubStk) {                         /* too big.. */
-          TBerror(18);
-          break;}
-        SrcEnd = SrcEnd+op;                               /* new size */
-        if (op>0) for (here=SrcEnd; (here--)>chpt+ix; )
-          Core[here] = Core[here-op];  /* shift backend over to right */
-        else if (op<0) for (here=chpt+ix; here<SrcEnd; here++)
-          Core[here] = Core[here-op];   /* shift it left to close gap */
-        if (ix>0) Poke2(chpt++,Lino);        /* insert the new line # */
-        while (ix>2) {                       /* insert the new line.. */
-          Core[++chpt] = Core[BP++];
-          ix--;}
-        Poke2(EndProg,SrcEnd);
-        ILPC = 0;
-        Lino = 0;
-          if (Debugging>0) ListIt(0,0);
-        break;
-
-/* MT      2B      Mark the BASIC program space Empty.                */
-/*                 Also clears the BASIC region of the control stack  */
-/* and restart the IL program in the command mode. The memory bounds  */
-/* and stack pointers are reset by this instruction to signify empty  */
-/* program space, and the line number of the first line is set to 0,  */
-/* which is the indication of the end of the program.                 */
-      case 43:
-        ColdStart();
-          if (Debugging>0) {ShowSubs(); ShowExSt(); ShowVars(0);}
-        break;
-
-/* XQ      2C      Execute.                                           */
-/*                 Turns on RUN mode. This instruction also saves     */
-/* the current value of the IL program counter for use of the NX      */
-/* instruction, and sets the BASIC pointer to the beginning of the    */
-/* BASIC program space. An error stop occurs if there is no BASIC     */
-/* program. This instruction must be executed at least once before    */
-/* the first execution of a NX instruction.                           */
-      case 44:
-        XQhere = ILPC;
-        BP = Peek2(UserProg);
-        Lino = Peek2(BP++);
-        BP++;
-        if (Lino == 0) TBerror(19);
-        else if (Debugging>0)
-          {OutStr(" [#"); OutInt(Lino); OutStr("]");}
-        break;
-
-/* WS      2D      Stop.                                              */
-/*                 Stop execution and restart the IL program in the   */
-/* command mode. The entire control stack (including BASIC region)    */
-/* is also vacated by this instruction. This instruction effectively  */
-/* jumps to the Warm Start entry of the ML interpreter.               */
-      case 45:
-        WarmStart();
-          if (Debugging>0) ShowSubs();
-        break;
-
-/* US      2E      Machine Language Subroutine Call.                  */
-/*                 The top six bytes of the expression stack contain  */
-/* 3 numbers with the following interpretations: The top number is    */
-/* loaded into the A (or A and B) register; the next number is loaded */
-/* into 16 bits of Index register; the third number is interpreted as */
-/* the address of a machine language subroutine to be called. These   */
-/* six bytes on the expression stack are replaced with the 16-bit     */
-/* result returned by the subroutine. Stack underflow results in an   */
-/* error stop.                                                        */
-      case 46:
-        Poke2(LinoCore,Lino);    /* bring these memory locations up.. */
-        Poke2(ILPCcore,ILPC);      /* ..to date, in case user looks.. */
-        Poke2(BPcore,BP);
-        Poke2(SvPtCore,SvPt);
-        ix = PopExInt()&0xFFFF;                            /* datum A */
-        here = PopExInt()&0xFFFF;                          /* datum X */
-        op = PopExInt()&0xFFFF;            /* nominal machine address */
-        if (ILPC == 0) break;
-        if (op>=Peek2(ILfront) && op<ILend) { /* call IL subroutine.. */
-          PushExInt(here);
-          PushExInt(ix);
-          PushSub(ILPC);                      /* push return location */
-          ILPC = op;
-          if (DEBUGON>0) LogIt(-ILPC);
-          break;}
-        switch (op) {
-        case WachPoint:    /* we only do a few predefined functions.. */
-          Watcher = here;
-          if (ix>32767) ix = -(int)Core[here]-256;
-          Watchee = ix;
-          if (Debugging>0) {
-            OutLn(); OutStr("[** Watch "); OutHex(here,4); OutStr("]");}
-          PushExInt((int)Core[here]);
-          break;
-        case ColdGo:
-          ColdStart();
-          break;
-        case WarmGo:
-          WarmStart();
-          break;
-        case InchSub:
-          PushExInt((int)Inch());
-          break;
-        case OutchSub:
-          Ouch((char)(ix&127));
-          PushExInt(0);
-          break;
-        case BreakSub:
-          PushExInt(StopIt());
-          break;
-        case PeekSub:
-          PushExInt((int)Core[here]);
-          break;
-        case Peek2Sub:
-          PushExInt(Peek2(here));
-          break;
-        case PokeSub:
-          ix = ix&0xFF;
-          Core[here] = (aByte)ix;
-          PushExInt(ix);
-          if (DEBUGON>0) LogIt(((ix+256)<<16)+here);
-          Lino = Peek2(LinoCore);         /* restore these pointers.. */
-          ILPC = Peek2(ILPCcore);    /* ..in case user changed them.. */
-          BP = Peek2(BPcore);
-          SvPt = Peek2(SvPtCore);
-          break;
-        case DumpSub:
-          ShoMemDump(here,ix);
-          PushExInt(here+ix);
-          break;
-        case TrLogSub:
-          ShowLog();
-          PushExInt(LogHere);
-          break;
-        default: TBerror(20);}
-        break;
-
-/* RT      2F      IL Subroutine Return.                              */
-/*                 The IL control stack is popped to give the address */
-/* of the next IL instruction. An error stop occurs if the entire     */
-/* control stack (IL and BASIC) is empty.                             */
-      case 47:
-        ix = PopSub();                         /* get return from pop */
-        if (ix<Peek2(ILfront) || ix>=ILend) TBerror(21);
-        else if (ILPC != 0) {
-          ILPC = ix;
-          if (DEBUGON>0) LogIt(-ILPC);}
-        break;
-
-/* JS a    3000-37FF       IL Subroutine Call.                        */
-/*                         The least significant eleven bits of this  */
-/* 2-byte instruction are added to the base address of the IL program */
-/* to become address of the next instruction. The previous contents   */
-/* of the IL program counter are pushed onto the IL region of the     */
-/* control stack. Stack overflow results in an error stop.            */
-      case 48: case 49: case 50: case 51: case 52: case 53: case 54: case 55:
-        PushSub(ILPC+1);                /* push return location there */
-        if (ILPC == 0) break;
-        ILPC = (Peek2(ILPC-1)&0x7FF)+Peek2(ILfront);
-        if (DEBUGON>0) LogIt(-ILPC);
-        break;
-
-/* J a     3800-3FFF       Jump.                                      */
-/*                         The low eleven bits of this 2-byte         */
-/* instruction are added to the IL program base address to determine  */
-/* the address of the next IL instruction. The previous contents of   */
-/* the IL program counter is lost. */
-      case 56: case 57: case 58: case 59: case 60: case 61: case 62: case 63:
-        ILPC = (Peek2(ILPC-1)&0x7FF)+Peek2(ILfront);
-        if (DEBUGON>0) LogIt(-ILPC);
-        break;
-
-/* NO      08      No Operation.                                      */
-/*                 This may be used as a space filler (such as to     */
-/* ignore a skip).                                                    */
-      default: break;} /* last of inner switch cases */
-      break; /* end of outer switch cases 0,1 */
-
-/* BR a    40-7F   Relative Branch.                                   */
-/*                 The low six bits of this instruction opcode are    */
-/* added algebraically to the current value of the IL program counter */
-/* to give the address of the next IL instruction. Bit 5 of opcode is */
-/* the sign, with + signified by 1, - by 0. The range of this branch  */
-/* is +/-31 bytes from address of the byte following the opcode. An   */
-/* offset of zero (i.e. opcode 60) results in an error stop. The      */
-/* branch operation is unconditional.                                 */
-      case 2: case 3:
-        ILPC = ILPC+op-96;
-        if (DEBUGON>0) LogIt(-ILPC);
-        break;
-
-/* BC a "xxx"   80xxxxXx-9FxxxxXx  String Match Branch.               */
-/*                                 The ASCII character string in IL   */
-/* following this opcode is compared to the string beginning with the */
-/* current position of the BASIC pointer, ignoring blanks in BASIC    */
-/* program. The comparison continues until either a mismatch, or an   */
-/* IL byte is reached with the most significant bit set to one. This  */
-/* is the last byte of the string in the IL, compared as a 7-bit      */
-/* character; if equal, the BASIC pointer is positioned after the     */
-/* last matching character in the BASIC program and the IL continues  */
-/* with the next instruction in sequence. Otherwise the BASIC pointer */
-/* is not altered and the low five bits of the Branch opcode are      */
-/* added to the IL program counter to form the address of the next    */
-/* IL instruction. If the strings do not match and the branch offset  */
-/* is zero an error stop occurs.                                      */
-      case 4:
-        if (op==128) here = 0;                /* to error if no match */
-          else here = ILPC+op-128;
-        chpt = BP;
-        ix = 0;
-        while ((ix&128)==0) {
-          while (((char)Core[BP]) == ' ') BP++;   /* skip over spaces */
-          ix = (int)Core[ILPC++];
-          if (((char)(ix&127)) != DeCaps[((int)Core[BP++])&127]) {
-            BP = chpt;         /* back up to front of string in Basic */
-            if (here==0) TBerror(22);
-              else ILPC = here;                 /* jump forward in IL */
-            break;}}
-        if (DEBUGON>0) if (ILPC>0) LogIt(-ILPC);
-        break;
-
-/* BV a    A0-BF   Branch if Not Variable.                            */
-/*                 If the next non-blank character pointed to by the  */
-/* BASIC pointer is a capital letter, its ASCII code is [doubled and] */
-/* pushed onto the expression stack and the IL program advances to    */
-/* next instruction in sequence, leaving the BASIC pointer positioned */
-/* after the letter; if not a letter the branch is taken and BASIC    */
-/* pointer is left pointing to that character. An error stop occurs   */
-/* if the next character is not a letter and the offset of the branch */
-/* is zero, or on stack overflow.                                     */
-      case 5:
-        while (((char)Core[BP]) == ' ') BP++;     /* skip over spaces */
-        ch = (char)Core[BP];
-        if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'))
-          PushExBy((((int)Core[BP++])&0x5F)*2);
-        else if (op==160) TBerror(23);           /* error if not letter */
-          else ILPC = ILPC+op-160;
-        if (DEBUGON>0) if (ILPC>0) LogIt(-ILPC);
-        break;
-
-/* BN a    C0-DF   Branch if Not a Number.                            */
-/*                 If the next non-blank character pointed to by the  */
-/* BASIC pointer is not a decimal digit, the low five bits of the     */
-/* opcode are added to the IL program counter, or if zero an error    */
-/* stop occurs. If the next character is a digit, then it and all     */
-/* decimal digits following it (ignoring blanks) are converted to a   */
-/* 16-bit binary number which is pushed onto the expression stack. In */
-/* either case the BASIC pointer is positioned at the next character  */
-/* which is neither blank nor digit. Stack overflow will result in an */
-/* error stop.                                                        */
-      case 6:
-        while (((char)Core[BP]) == ' ') BP++;     /* skip over spaces */
-        ch = (char)Core[BP];
-        if (ch >= '0' && ch <= '9') {
-          op = 0;
-          while (true) {
-            here = (int)Core[BP++];
-            if (here==32) continue;               /* skip over spaces */
-            if (here<48 || here>57) break;     /* not a decimal digit */
-            op = op*10+here-48;}                 /* insert into value */
-          BP--;                             /* back up over non-digit */
-          PushExInt(op);}
-        else if (op==192) TBerror(24);             /* error if no digit */
-          else ILPC = ILPC+op-192;
-        if (DEBUGON>0) if (ILPC>0) LogIt(-ILPC);
-        break;
-
-/* BE a    E0-FF   Branch if Not Endline.                             */
-/*                 If the next non-blank character pointed to by the  */
-/* BASIC pointer is a carriage return, the IL program advances to the */
-/* next instruction in sequence; otherwise the low five bits of the   */
-/* opcode (if not 0) are added to the IL program counter to form the  */
-/* address of next IL instruction. In either case the BASIC pointer   */
-/* is left pointing to the first non-blank character; this            */
-/* instruction will not pass over the carriage return, which must     */
-/* remain for testing by the NX instruction. As with the other        */
-/* conditional branches, the branch may only advance the IL program   */
-/* counter from 1 to 31 bytes; an offset of zero results in an error  */
-/* stop.                                                              */
-      case 7:
-        while (((char)Core[BP]) == ' ') BP++;     /* skip over spaces */
-        if (((char)Core[BP]) == '\r') ;
-        else if (op==224) TBerror(25);            /* error if no offset */
-          else ILPC = ILPC+op-224;
-        if (DEBUGON>0) if (ILPC>0) LogIt(-ILPC);
+      case '&':
+        od = pop();
         break;
     }
-//  }
-_skip:
+    goto separators;
+  }
 
-} /* ~Interp */
+  if (token != ',' && token != ';') {
+    expression();
+    if (!USELONGJUMP && er) return;
+    outnumber(pop());
+  }
 
-/***************** Intermediate Interpreter Assembled *****************/
+  /* commas and semicolons, all other symbols are accepted and no error is thrown */
+separators:
+  if (termsymbol()) goto processsymbol;
 
-char* DefaultIL() {
-  static char s[9000];    /* be sure to increase size if you add text */
-  strcpy(s,"0000 ;       1 .  ORIGINAL TINY BASIC INTERMEDIATE INTERPRETER\n");
-  strcat(s,"0000 ;       2 .\n");
-  strcat(s,"0000 ;       3 .  EXECUTIVE INITIALIZATION\n");
-  strcat(s,"0000 ;       4 .\n");
-  strcat(s,"0000 ;       5 :STRT PC \":Q^\"        COLON, X-ON\n");
-  strcat(s,"0000 243A91;\n");
-  strcat(s,"0003 ;       6       GL\n");
-  strcat(s,"0003 27;     7       SB\n");
-  strcat(s,"0004 10;     8       BE L0           BRANCH IF NOT EMPTY\n");
-  strcat(s,"0005 E1;     9       BR STRT         TRY AGAIN IF NULL LINE\n");
-  strcat(s,"0006 59;    10 :L0   BN STMT         TEST FOR LINE NUMBER\n");
-  strcat(s,"0007 C5;    11       IL              IF SO, INSERT INTO PROGRAM\n");
-  strcat(s,"0008 2A;    12       BR STRT         GO GET NEXT\n");
-  strcat(s,"0009 56;    13 :XEC  SB              SAVE POINTERS FOR RUN WITH\n");
-  strcat(s,"000A 10;    14       RB                CONCATENATED INPUT\n");
-  strcat(s,"000B 11;    15       XQ\n");
-  strcat(s,"000C 2C;    16 .\n");
-  strcat(s,"000D ;      17 .  STATEMENT EXECUTOR\n");
-  strcat(s,"000D ;      18 .\n");
-  strcat(s,"000D ;      19 :STMT BC GOTO \"LET\"\n");
-  strcat(s,"000D 8B4C45D4;\n");
-  strcat(s,"0011 ;      20       BV *            MUST BE A VARIABLE NAME\n");
-  strcat(s,"0011 A0;    21       BC * \"=\"\n");
-  strcat(s,"0012 80BD;  22 :LET  JS EXPR         GO GET EXPRESSION\n");
-  strcat(s,"0014 30BC;  23       BE *            IF STATEMENT END,\n");
-  strcat(s,"0016 E0;    24       SV                STORE RESULT\n");
-  strcat(s,"0017 13;    25       NX\n");
-  strcat(s,"0018 1D;    26 .\n");
-  strcat(s,"0019 ;      27 :GOTO BC PRNT \"GO\"\n");
-  strcat(s,"0019 9447CF;\n");
-  strcat(s,"001C ;      28       BC GOSB \"TO\"\n");
-  strcat(s,"001C 8854CF;\n");
-  strcat(s,"001F ;      29       JS EXPR         GET LINE NUMBER\n");
-  strcat(s,"001F 30BC;  30       BE *\n");
-  strcat(s,"0021 E0;    31       SB              (DO THIS FOR STARTING)\n");
-  strcat(s,"0022 10;    32       RB\n");
-  strcat(s,"0023 11;    33       GO              GO THERE\n");
-  strcat(s,"0024 16;    34 .\n");
-  strcat(s,"0025 ;      35 :GOSB BC * \"SUB\"      NO OTHER WORD BEGINS \"GO...\"\n");
-  strcat(s,"0025 805355C2;\n");
-  strcat(s,"0029 ;      36       JS EXPR\n");
-  strcat(s,"0029 30BC;  37       BE *\n");
-  strcat(s,"002B E0;    38       GS\n");
-  strcat(s,"002C 14;    39       GO\n");
-  strcat(s,"002D 16;    40 .\n");
-  strcat(s,"002E ;      41 :PRNT BC SKIP \"PR\"\n");
-  strcat(s,"002E 9050D2;\n");
-  strcat(s,"0031 ;      42       BC P0 \"INT\"     OPTIONALLY OMIT \"INT\"\n");
-  strcat(s,"0031 83494ED4;\n");
-  strcat(s,"0035 ;      43 :P0   BE P3\n");
-  strcat(s,"0035 E5;    44       BR P6           IF DONE, GO TO END\n");
-  strcat(s,"0036 71;    45 :P1   BC P4 \";\"\n");
-  strcat(s,"0037 88BB;  46 :P2   BE P3\n");
-  strcat(s,"0039 E1;    47       NX              NO CRLF IF ENDED BY ; OR ,\n");
-  strcat(s,"003A 1D;    48 :P3   BC P7 '\"'\n");
-  strcat(s,"003B 8FA2;  49       PQ              QUOTE MARKS STRING\n");
-  strcat(s,"003D 21;    50       BR P1           GO CHECK DELIMITER\n");
-  strcat(s,"003E 58;    51 :SKIP BR IF           (ON THE WAY THRU)\n");
-  strcat(s,"003F 6F;    52 :P4   BC P5 \",\"\n");
-  strcat(s,"0040 83AC;  53       PT              COMMA SPACING\n");
-  strcat(s,"0042 22;    54       BR P2\n");
-  strcat(s,"0043 55;    55 :P5   BC P6 \":\"\n");
-  strcat(s,"0044 83BA;  56       PC \"S^\"         OUTPUT X-OFF\n");
-  strcat(s,"0046 2493;  57 :P6   BE *\n");
-  strcat(s,"0048 E0;    58       NL              THEN CRLF\n");
-  strcat(s,"0049 23;    59       NX\n");
-  strcat(s,"004A 1D;    60 :P7   JS EXPR         TRY FOR AN EXPRESSION\n");
-  strcat(s,"004B 30BC;  61       PN\n");
-  strcat(s,"004D 20;    62       BR P1\n");
-  strcat(s,"004E 48;    63 .\n");
-  strcat(s,"004F ;      64 :IF   BC INPT \"IF\"\n");
-  strcat(s,"004F 9149C6;\n");
-  strcat(s,"0052 ;      65       JS EXPR\n");
-  strcat(s,"0052 30BC;  66       JS RELO\n");
-  strcat(s,"0054 3134;  67       JS EXPR\n");
-  strcat(s,"0056 30BC;  68       BC I1 \"THEN\"    OPTIONAL NOISEWORD\n");
-  strcat(s,"0058 84544845CE;\n");
-  strcat(s,"005D ;      69 :I1   CP              COMPARE SKIPS NEXT IF TRUE\n");
-  strcat(s,"005D 1C;    70       NX              FALSE.\n");
-  strcat(s,"005E 1D;    71       J STMT          TRUE. GO PROCESS STATEMENT\n");
-  strcat(s,"005F 380D;  72 .\n");
-  strcat(s,"0061 ;      73 :INPT BC RETN \"INPUT\"\n");
-  strcat(s,"0061 9A494E5055D4;\n");
-  strcat(s,"0067 ;      74 :I2   BV *            GET VARIABLE\n");
-  strcat(s,"0067 A0;    75       SB              SWAP POINTERS\n");
-  strcat(s,"0068 10;    76       BE I4\n");
-  strcat(s,"0069 E7;    77 :I3   PC \"? Q^\"       LINE IS EMPTY; TYPE PROMPT\n");
-  strcat(s,"006A 243F2091;\n");
-  strcat(s,"006E ;      78       GL              READ INPUT LINE\n");
-  strcat(s,"006E 27;    79       BE I4           DID ANYTHING COME?\n");
-  strcat(s,"006F E1;    80       BR I3           NO, TRY AGAIN\n");
-  strcat(s,"0070 59;    81 :I4   BC I5 \",\"       OPTIONAL COMMA\n");
-  strcat(s,"0071 81AC;  82 :I5   JS EXPR         READ A NUMBER\n");
-  strcat(s,"0073 30BC;  83       SV              STORE INTO VARIABLE\n");
-  strcat(s,"0075 13;    84       RB              SWAP BACK\n");
-  strcat(s,"0076 11;    85       BC I6 \",\"       ANOTHER?\n");
-  strcat(s,"0077 82AC;  86       BR I2           YES IF COMMA\n");
-  strcat(s,"0079 4D;    87 :I6   BE *            OTHERWISE QUIT\n");
-  strcat(s,"007A E0;    88       NX\n");
-  strcat(s,"007B 1D;    89 .\n");
-  strcat(s,"007C ;      90 :RETN BC END \"RETURN\"\n");
-  strcat(s,"007C 895245545552CE;\n");
-  strcat(s,"0083 ;      91       BE *\n");
-  strcat(s,"0083 E0;    92       RS              RECOVER SAVED LINE\n");
-  strcat(s,"0084 15;    93       NX\n");
-  strcat(s,"0085 1D;    94 .\n");
-  strcat(s,"0086 ;      95 :END  BC LIST \"END\"\n");
-  strcat(s,"0086 85454EC4;\n");
-  strcat(s,"008A ;      96       BE *\n");
-  strcat(s,"008A E0;    97       WS\n");
-  strcat(s,"008B 2D;    98 .\n");
-  strcat(s,"008C ;      99 :LIST BC RUN \"LIST\"\n");
-  strcat(s,"008C 984C4953D4;\n");
-  strcat(s,"0091 ;     100       BE L2\n");
-  strcat(s,"0091 EC;   101 :L1   PC \"@^@^@^@^J^@^\" PUNCH LEADER\n");
-  strcat(s,"0092 24000000000A80;\n");
-  strcat(s,"0099 ;     102       LS              LIST\n");
-  strcat(s,"0099 1F;   103       PC \"S^\"         PUNCH X-OFF\n");
-  strcat(s,"009A 2493; 104       NL\n");
-  strcat(s,"009C 23;   105       NX\n");
-  strcat(s,"009D 1D;   106 :L2   JS EXPR         GET A LINE NUMBER\n");
-  strcat(s,"009E 30BC; 107       BE L3\n");
-  strcat(s,"00A0 E1;   108       BR L1\n");
-  strcat(s,"00A1 50;   109 :L3   BC * \",\"        SEPARATED BY COMMAS\n");
-  strcat(s,"00A2 80AC; 110       BR L2\n");
-  strcat(s,"00A4 59;   111 .\n");
-  strcat(s,"00A5 ;     112 :RUN  BC CLER \"RUN\"\n");
-  strcat(s,"00A5 855255CE;\n");
-  strcat(s,"00A9 ;     113       J XEC\n");
-  strcat(s,"00A9 380A; 114 .\n");
-  strcat(s,"00AB ;     115 :CLER BC REM \"CLEAR\"\n");
-  strcat(s,"00AB 86434C4541D2;\n");
-  strcat(s,"00B1 ;     116       MT\n");
-  strcat(s,"00B1 2B;   117 .\n");
-  strcat(s,"00B2 ;     118 :REM  BC DFLT \"REM\"\n");
-  strcat(s,"00B2 845245CD;\n");
-  strcat(s,"00B6 ;     119       NX\n");
-  strcat(s,"00B6 1D;   120 .\n");
-  strcat(s,"00B7 ;     121 :DFLT BV *            NO KEYWORD...\n");
-  strcat(s,"00B7 A0;   122       BC * \"=\"        TRY FOR LET\n");
-  strcat(s,"00B8 80BD; 123       J LET           IT'S A GOOD BET.\n");
-  strcat(s,"00BA 3814; 124 .\n");
-  strcat(s,"00BC ;     125 .  SUBROUTINES\n");
-  strcat(s,"00BC ;     126 .\n");
-  strcat(s,"00BC ;     127 :EXPR BC E0 \"-\"       TRY FOR UNARY MINUS\n");
-  strcat(s,"00BC 85AD; 128       JS TERM         AHA\n");
-  strcat(s,"00BE 30D3; 129       NE\n");
-  strcat(s,"00C0 17;   130       BR E1\n");
-  strcat(s,"00C1 64;   131 :E0   BC E4 \"+\"       IGNORE UNARY PLUS\n");
-  strcat(s,"00C2 81AB; 132 :E4   JS TERM\n");
-  strcat(s,"00C4 30D3; 133 :E1   BC E2 \"+\"       TERMS SEPARATED BY PLUS\n");
-  strcat(s,"00C6 85AB; 134       JS TERM\n");
-  strcat(s,"00C8 30D3; 135       AD\n");
-  strcat(s,"00CA 18;   136       BR E1\n");
-  strcat(s,"00CB 5A;   137 :E2   BC E3 \"-\"       TERMS SEPARATED BY MINUS\n");
-  strcat(s,"00CC 85AD; 138       JS TERM\n");
-  strcat(s,"00CE 30D3; 139       SU\n");
-  strcat(s,"00D0 19;   140       BR E1\n");
-  strcat(s,"00D1 54;   141 :E3   RT\n");
-  strcat(s,"00D2 2F;   142 .\n");
-  strcat(s,"00D3 ;     143 :TERM JS FACT\n");
-  strcat(s,"00D3 30E2; 144 :T0   BC T1 \"*\"       FACTORS SEPARATED BY TIMES\n");
-  strcat(s,"00D5 85AA; 145       JS FACT\n");
-  strcat(s,"00D7 30E2; 146       MP\n");
-  strcat(s,"00D9 1A;   147       BR T0\n");
-  strcat(s,"00DA 5A;   148 :T1   BC T2 \"/\"       FACTORS SEPARATED BY DIVIDE\n");
-  strcat(s,"00DB 85AF; 149       JS  FACT\n");
-  strcat(s,"00DD 30E2; 150       DV\n");
-  strcat(s,"00DF 1B;   151       BR T0\n");
-  strcat(s,"00E0 54;   152 :T2   RT\n");
-  strcat(s,"00E1 2F;   153 .\n");
-  strcat(s,"00E2 ;     154 :FACT BC F0 \"RND\"     *RND FUNCTION*\n");
-  strcat(s,"00E2 97524EC4;\n");
-  strcat(s,"00E6 ;     155       LN 257*128      STACK POINTER FOR STORE\n");
-  strcat(s,"00E6 0A;\n");
-  strcat(s,"00E7 8080; 156       FV              THEN GET RNDM\n");
-  strcat(s,"00E9 12;   157       LN 2345         R:=R*2345+6789\n");
-  strcat(s,"00EA 0A;\n");
-  strcat(s,"00EB 0929; 158       MP\n");
-  strcat(s,"00ED 1A;   159       LN 6789\n");
-  strcat(s,"00EE 0A;\n");
-  strcat(s,"00EF 1A85; 160       AD\n");
-  strcat(s,"00F1 18;   161       SV\n");
-  strcat(s,"00F2 13;   162       LB 128          GET IT AGAIN\n");
-  strcat(s,"00F3 0980; 163       FV\n");
-  strcat(s,"00F5 12;   164       DS\n");
-  strcat(s,"00F6 0B;   165       JS FUNC         GET ARGUMENT\n");
-  strcat(s,"00F7 3130; 166       BR F1\n");
-  strcat(s,"00F9 61;   167 :F0   BR F2           (SKIPPING)\n");
-  strcat(s,"00FA 73;   168 :F1   DS\n");
-  strcat(s,"00FB 0B;   169       SX 2            PUSH TOP INTO STACK\n");
-  strcat(s,"00FC 02;   170       SX 4\n");
-  strcat(s,"00FD 04;   171       SX 2\n");
-  strcat(s,"00FE 02;   172       SX 3\n");
-  strcat(s,"00FF 03;   173       SX 5\n");
-  strcat(s,"0100 05;   174       SX 3\n");
-  strcat(s,"0101 03;   175       DV              PERFORM MOD FUNCTION\n");
-  strcat(s,"0102 1B;   176       MP\n");
-  strcat(s,"0103 1A;   177       SU\n");
-  strcat(s,"0104 19;   178       DS              PERFORM ABS FUNCTION\n");
-  strcat(s,"0105 0B;   179       LB 6\n");
-  strcat(s,"0106 0906; 180       LN 0\n");
-  strcat(s,"0108 0A;\n");
-  strcat(s,"0109 0000; 181       CP              (SKIP IF + OR 0)\n");
-  strcat(s,"010B 1C;   182       NE\n");
-  strcat(s,"010C 17;   183       RT\n");
-  strcat(s,"010D 2F;   184 :F2   BC F3 \"USR\"     *USR FUNCTION*\n");
-  strcat(s,"010E 8F5553D2;\n");
-  strcat(s,"0112 ;     185       BC * \"(\"        3 ARGUMENTS POSSIBLE\n");
-  strcat(s,"0112 80A8; 186       JS EXPR         ONE REQUIRED\n");
-  strcat(s,"0114 30BC; 187       JS ARG\n");
-  strcat(s,"0116 312A; 188       JS ARG\n");
-  strcat(s,"0118 312A; 189       BC * \")\"\n");
-  strcat(s,"011A 80A9; 190       US              GO DO IT\n");
-  strcat(s,"011C 2E;   191       RT\n");
-  strcat(s,"011D 2F;   192 :F3   BV F4           VARIABLE?\n");
-  strcat(s,"011E A2;   193       FV              YES.  GET IT\n");
-  strcat(s,"011F 12;   194       RT\n");
-  strcat(s,"0120 2F;   195 :F4   BN F5           NUMBER?\n");
-  strcat(s,"0121 C1;   196       RT              GOT IT.\n");
-  strcat(s,"0122 2F;   197 :F5   BC * \"(\"        OTHERWISE MUST BE (EXPR)\n");
-  strcat(s,"0123 80A8; 198 :F6   JS EXPR\n");
-  strcat(s,"0125 30BC; 199       BC * \")\"\n");
-  strcat(s,"0127 80A9; 200       RT\n");
-  strcat(s,"0129 2F;   201 .\n");
-  strcat(s,"012A ;     202 :ARG  BC A0 \",\"        COMMA?\n");
-  strcat(s,"012A 83AC; 203       J  EXPR          YES, GET EXPRESSION\n");
-  strcat(s,"012C 38BC; 204 :A0   DS               NO, DUPLICATE STACK TOP\n");
-  strcat(s,"012E 0B;   205       RT\n");
-  strcat(s,"012F 2F;   206 .\n");
-  strcat(s,"0130 ;     207 :FUNC BC * \"(\"\n");
-  strcat(s,"0130 80A8; 208       BR F6\n");
-  strcat(s,"0132 52;   209       RT\n");
-  strcat(s,"0133 2F;   210 .\n");
-  strcat(s,"0134 ;     211 :RELO BC R0 \"=\"        CONVERT RELATION OPERATORS\n");
-  strcat(s,"0134 84BD; 212       LB 2             TO CODE BYTE ON STACK\n");
-  strcat(s,"0136 0902; 213       RT               =\n");
-  strcat(s,"0138 2F;   214 :R0   BC R4 \"<\"\n");
-  strcat(s,"0139 8EBC; 215       BC R1 \"=\"\n");
-  strcat(s,"013B 84BD; 216       LB 3             <=\n");
-  strcat(s,"013D 0903; 217       RT\n");
-  strcat(s,"013F 2F;   218 :R1   BC R3 \">\"\n");
-  strcat(s,"0140 84BE; 219       LB 5             <>\n");
-  strcat(s,"0142 0905; 220       RT\n");
-  strcat(s,"0144 2F;   221 :R3   LB 1             <\n");
-  strcat(s,"0145 0901; 222       RT\n");
-  strcat(s,"0147 2F;   223 :R4   BC * \">\"\n");
-  strcat(s,"0148 80BE; 224       BC R5 \"=\"\n");
-  strcat(s,"014A 84BD; 225       LB 6             >=\n");
-  strcat(s,"014C 0906; 226       RT\n");
-  strcat(s,"014E 2F;   227 :R5   BC R6 \"<\"\n");
-  strcat(s,"014F 84BC; 228       LB 5             ><\n");
-  strcat(s,"0151 0905; 229       RT\n");
-  strcat(s,"0153 2F;   230 :R6   LB 4             >\n");
-  strcat(s,"0154 0904; 231       RT\n");
-  strcat(s,"0156 2F;   232 .\n");
-  strcat(s,"0157 ;    0000\n");
-  return s;} /* ~DefaultIL */
+  switch (token) {
+    case ',':
+      if (!modifier) outspc();
+    case ';':
+      semicolon = 1;
+      nexttoken();
+      break;
+  }
+  modifier = 0;
 
-/**************************** Startup Code ****************************/
+  goto processsymbol;
+}
 
-void StartTinyBasic(char* ILtext) {
-  int nx;
-  for (nx=0; nx<CoreTop; nx++) Core[nx] = 0;          /* clear Core.. */
-  Poke2(ExpnStk,8191);                          /* random number seed */
-  Core[BScode] = 127; // KeyPortari uses Delete for backspace -> 8; /* backspace */
-  Core[CanCode] = 27; /*escape */
-  for (nx=0; nx<32; nx++) DeCaps[nx] = '\0';     /* fill caps table.. */
-  for (nx=32; nx<127; nx++) DeCaps[nx] = (char)nx;
-  for (nx=65; nx<91; nx++) DeCaps[nx+32] = (char)nx;
-  DeCaps[9] = ' ';
-  DeCaps[10] = '\r';
-  DeCaps[13] = '\r';
-  DeCaps[127] = '\0';
-  if (ILtext == NULL) ILtext = DefaultIL();  /* no IL given, use mine */
-  ConvtIL(ILtext);              /* convert IL assembly code to binary */
-  ColdStart();
-//  Interp();                                               /* go do it */
-} /* ~StartTinyBasic */
+/*
+ 	LET assigment code for various lefthand and righthand side.
 
+
+ 	lefthandside is a helper function for reuse in other
+ 	commands. It determines the address the value is to be
+ 	assigned to and whether the assignment target is a
+ 	"pure" i.e. subscriptless string expression
+
+ 	assignnumber assigns a number to a given lefthandside
+
+   In lefthandside the type of the object is determined and
+   possible subscripts are parsed.
+
+   Variables have no subscripts. The arguments are unchanged.
+   Arrays may have two subscript which will go to i, j
+   Strings may have a string subscript, going to i and an array subscript
+   going to j
+   String arrays use i2 as the array index.
+   Note that the role of the variables differs for string array and normal
+   arrays.
+   Strings without a subscript i.e. pure strings, set the ps flag
+
+*/
+
+/* the new lefthandsite code */
+void lefthandside(lhsobject_t* lhs) {
+
+  /* just to provide it for parsestringvar to reuse the righthandside code */
+  address_t temp;
+
+  if (DEBUG) {
+    outsc("assigning to variable ");
+    outname(&lhs->name); outspc();
+    outsc(" type "); outnumber(lhs->name.token);
+    outcr();
+  }
+
+  /* prep it */
+  lhs->i = 1;
+  lhs->i2 = 0;
+  lhs->j = arraylimit;
+  lhs->ps = 1;
+
+  /* look at the variables and continue parsing */
+  switch (lhs->name.token) {
+    case VARIABLE:
+      nexttoken();
+      break;
+    case ARRAYVAR:
+      parsesubscripts();
+      if (!USELONGJUMP && er) return;
+      switch (args) {
+        case 1:
+          lhs->i = popaddress();
+          if (!USELONGJUMP && er) return;
+          lhs->j = arraylimit;
+          break;
+        case 2:
+          lhs->j = popaddress();
+          if (!USELONGJUMP && er) return;
+          lhs->i = popaddress();
+          if (!USELONGJUMP && er) return;
+          break;
+        default:
+          error(EARGS);
+          return;
+      }
+      nexttoken();
+      break;
+#ifdef HASAPPLE1
+    case STRINGVAR:
+      parsestringvar(0, lhs);
+      nexttoken();
+      break;
+#else /* HASAPPLE1 */
+      /* here we could implement a string thing for a true Tinybasic */
+#endif
+    default:
+      error(EUNKNOWN);
+      return;
+  }
+
+  if (DEBUG) {
+    outsc("** in assignment lefthandside with (i,j,ps,i2) ");
+    outnumber(lhs->i); outspc();
+    outnumber(lhs->j); outspc();
+    outnumber(lhs->ps); outspc();
+    outnumber(lhs->i2); outcr();
+    outsc("   token is "); outputtoken();
+    outsc("   at "); outnumber(here); outcr();
+  }
+}
+
+/* assign a number to a left hand side we have parsed */
+void assignnumber2(lhsobject_t* lhs, number_t x) {
+  string_t sr;
+
+  /* depending on the variable type, assign the value */
+  switch (lhs->name.token) {
+    case VARIABLE:
+      setvar(&lhs->name, x);
+      break;
+    case ARRAYVAR:
+      array(lhs, 's', &x);
+      break;
+#ifdef HASAPPLE1
+    case STRINGVAR:
+
+      /* find the string variable */
+      getstring(&sr, &lhs->name, lhs->i, lhs->j);
+      if (!USELONGJUMP && er) return;
+
+      /* the first character of the string is set to the number */
+      if (sr.ir) sr.ir[0] = x; else if (sr.address) memwrite2(ax, x); else error(EUNKNOWN);
+
+      /* set the length */
+      if (lhs->ps)
+        setstringlength(&lhs->name, 1, lhs->j);
+      else if (sr.length < lhs->i && lhs->i <= sr.strdim)
+        setstringlength(&lhs->name, lhs->i, lhs->j);
+      break;
+#endif
+  }
+}
+
+/*
+ 	LET - the core assigment function, this is different from other BASICs
+*/
+void assignment() {
+  address_t newlength, copybytes;
+  mem_t s;
+  index_t k;
+  char tmpchar; /* for number conversion only */
+  string_t sr, sl; /* the right and left hand side strings */
+
+  /* the lefthandside identifier */
+  lhsobject_t lhs;
+
+  /* this code evaluates the left hand side, we remember the object information first */
+  copyname(&lhs.name, &name);
+
+  lefthandside(&lhs);
+  if (!USELONGJUMP && er) return;
+
+  /* the assignment part */
+  if (token != '=') {
+    error(EUNKNOWN);
+    return;
+  }
+  nexttoken();
+
+  /* here comes the code for the right hand side, the evaluation depends on the left hand side type */
+  switch (lhs.name.token) {
+    /* the lefthandside is a scalar, evaluate the righthandside as a number, even if it is a string */
+    case VARIABLE:
+    case ARRAYVAR:
+      expression();
+      if (!USELONGJUMP && er) return;
+      assignnumber2(&lhs, pop());
+      break;
+#ifdef HASAPPLE1
+    /* the lefthandside is a string variable, try evaluate the righthandside as a stringvalue */
+    case STRINGVAR:
+nextstring:
+
+      /* do we deal with a string as righthand side */
+      s = stringvalue(&sr);
+      if (!USELONGJUMP && er) return;
+
+      /* and then as an expression if it is no string, any number appearing in a string expression terminates the addition loop */
+      if (!s) {
+        expression();
+        if (!USELONGJUMP && er) return;
+        tmpchar = pop();
+        sr.length = 1;
+        sr.ir = &tmpchar;
+      } else
+        nexttoken(); /* we do this here because expression also advances, this way we avoid double advance */
+
+      if (DEBUG) {
+        outsc("* assigment stringcode at ");
+        outnumber(here);
+        outcr();
+      }
+
+      /* at this point we  have a stringvalue with ir2 pointing to the payload and the stack the length
+      	this is either coming from stringvalue or from the expression code */
+
+      /* we now process the source string */
+
+      /* getstring of the destination */
+      getstring(&sl, &lhs.name, lhs.i, lhs.j);
+      if (!USELONGJUMP && er) return;
+
+      /* this debug messes up sbuffer hence all functions that use it in stringvalue produce wrong results */
+      if (DEBUG) {
+        outsc("* assigment stringcode "); outname(&lhs.name); outcr();
+        outsc("** assignment source string length "); outnumber(sr.length); outcr();
+        outsc("** assignment dest string length "); outnumber(sl.length); outcr();
+        outsc("** assignment dest string dimension "); outnumber(sl.strdim); outcr();
+      }
+
+      /* does the source string fit into the destination if we have no destination second index*/
+      if ((lhs.i2 == 0) && ((lhs.i + sr.length - 1) > sl.strdim)) {
+        error(EORANGE);
+        return;
+      };
+
+      /* if we have a second index, is it in range */
+      if ((lhs.i2 != 0) && lhs.i2 > sl.strdim) {
+        error(EORANGE);
+        return;
+      };
+
+      /* calculate the number of bytes we truely want to copy */
+      if (lhs.i2 > 0) copybytes = ((lhs.i2 - lhs.i + 1) > sr.length) ? sr.length : (lhs.i2 - lhs.i + 1);
+      else copybytes = sr.length;
+
+      if (DEBUG) {
+        outsc("** assignment copybytes ");
+        outnumber(copybytes);
+        outcr();
+      }
+
+      /* now do the heavy lifting in a seperate function to encasulate buffering */
+      assignstring(&sl, &sr, copybytes);
+
+      /*
+         classical Apple 1 behaviour is string truncation in substring logic, with
+         two index destination string we follow another route. We extend the string
+         for the number of copied bytes
+      */
+      if (lhs.i2 == 0) {
+        newlength = lhs.i + sr.length - 1;
+      } else {
+        if (lhs.i + copybytes > sl.length) newlength = lhs.i + copybytes - 1;
+        else newlength = sl.length;
+      }
+
+      setstringlength(&lhs.name, newlength, lhs.j);
+      /*
+         we have processed one string and copied it fully to the destination
+         see if there is more to come. For inplace strings this is odd because
+         one term can change during adding (A$ = B$ + A$).
+      */
+addstring:
+      if (token == '+') {
+        lhs.i = lhs.i + copybytes;
+        nexttoken();
+        goto nextstring;
+      }
+      break; /* case STRINGVAR */
+#endif /* HASAPPLE1 */
+  } /* switch */
+}
+
+
+/*
+   Try to copy one string to the other, assumes that getstring did its work
+   and that copybyte is correct.
+   BASICs in place strings make this a non trivial exercise as we need to
+   avoid overwrites.
+   Another complication is the mixed situation of BASIC memory strings
+   and C memory strings.
+*/
+void assignstring(string_t* sl, string_t* sr, stringlength_t copybytes) {
+  stringlength_t k;
+
+  /* if we have a memory model that needs the mem interface, go through the addresses by default
+  	else use just the pointers */
+
+#ifdef USEMEMINTERFACE
+  /* for a regular string variable as left hand side we know the address */
+  if (sl->address) {
+
+    /* for a regular string variable as a source we need to take care of order */
+
+    if (sr->address) {
+      if (sr->address > sl->address)
+        for (k = 0; k < copybytes; k++) memwrite2(sl->address + k, memread2(sr->address + k));
+      else
+        for (k = 1; k <= copybytes; k++) memwrite2(sl->address + copybytes - k, memread2(sr->address + copybytes - k));
+    } else {
+
+      /* if the right hand side is a special string or a constant things are much simpler */
+
+      for (k = 0; k < copybytes; k++) memwrite2(sl->address + k, sr->ir[k]);
+
+    }
+  } else {
+
+    /* non regular string variables like @U$ and @T$ are never assignable */
+    error(EUNKNOWN);
+  }
+#else
+
+  /* we just go through the C memory here */
+
+  if (sr->ir && sl->ir) {
+    if (sr->ir > sl->ir)
+      for (k = 0; k < copybytes; k++) sl->ir[k] = sr->ir[k];
+    else
+      for (k = 1; k <= copybytes; k++) sl->ir[copybytes - k] = sr->ir[copybytes - k];
+  } else {
+    error(EUNKNOWN);
+  }
+
+#endif
+}
+
+/*
+   INPUT ["string",] variable [,["string",] variable]
+
+   The original version of input only processes simple variables one at a time
+   and does not support arrays. The code is redudant to assignment and read.
+   It also does not support comma separated lists of values to be input.
+*/
+void showprompt() {
+  outsc("? ");
+}
+
+/*
+   Reimplementation of input using the same pattern as read and print .
+*/
+void xinput() {
+
+  mem_t oldid = id; /* remember the stream on modify */
+  mem_t prompt = 1; /* determine if we show the prompt */
+  number_t xv; /* for number conversion with innumber */
+
+  /* the identifier of the lefthandside */
+  lhsobject_t lhs;
+
+  address_t maxlen, newlength; /* the maximum length of the string to be read */
+  int k = 0; /* the result of the number conversion */
+  string_t s;
+  char* buffer; /* the buffer we use for input */
+  address_t bufsize; /* the size of the buffer */
+
+  /* depending on the RUN state we use either the input buffer or the string buffer */
+  /* this ways we can process long inputs in RUN and don't need a lot of memory */
+  if (st == SRUN || st == SERUN) {
+    buffer = ibuffer;
+    bufsize = BUFSIZE;
+  } else {
+    buffer = sbuffer;
+    bufsize = SBUFSIZE;
+  }
+
+  /* get the next token and check what we are dealing with */
+  nexttoken();
+
+  /* modifiers of the input statement (stream) */
+  if (token == '&') {
+    if (!expectexpr()) return;
+    oldid = id;
+    id = pop();
+    if (id != ISERIAL || id != IKEYBOARD) prompt = 0;
+    if (token != ',') {
+      error(EUNKNOWN);
+      return;
+    } else
+      nexttoken();
+  }
+
+  /* unlike print, form can appear only once in input after the
+  		stream, it controls character counts in wire */
+  if (token == '#') {
+    if (!expectexpr()) return;
+    form = pop();
+    if (token != ',') {
+      error(EUNKNOWN);
+      return;
+    } else
+      nexttoken();
+  }
+
+  /* we have a string to be printed to prompt the user */
+nextstring:
+  if (token == STRING && id != IFILE) {
+    prompt = 0;
+#ifdef USEMEMINTERFACE
+    if (!sr.ir) getstringtobuffer(&sr, spistrbuf1, SPIRAMSBSIZE);
+#endif
+    outs(sr.ir, sr.length);
+    nexttoken();
+  }
+
+  /* now we check for a variable and parse it */
+nextvariable:
+  if (token == VARIABLE || token == ARRAYVAR || token == STRINGVAR) {
+
+    /* check for a valid lefthandside expression */
+    copyname(&lhs.name, &name);
+
+    lefthandside(&lhs);
+    if (!USELONGJUMP && er) return;
+
+    /* which data type do we input */
+    switch (lhs.name.token) {
+      case VARIABLE:
+      case ARRAYVAR:
+again:
+        /* if we have no buffer or are at the end, read it and set cursor k to the beginning */
+        if (k == 0 || (address_t) buffer[0] < k) {
+          if (prompt) showprompt();
+          (void) ins(buffer, bufsize);
+          k = 1;
+        }
+
+        /* read a number from the buffer and return it, advance the cursor k */
+        k = innumber(&xv, buffer, k);
+
+        /* if we break, end it here */
+        if (k == -1) {
+          st = SINT;
+          token = EOL;
+          goto resetinput;
+        }
+
+        /* if we have no valid number, ask again */
+        if (k == 0) {
+          if (id == ISERIAL || id == IKEYBOARD) {
+            printmessage(ENUMBER);
+            outspc();
+            printmessage(EGENERAL);
+            outcr();
+            xv = 0;
+            k = 0;
+            goto again;
+          } else {
+            ert = 1;
+            xv = 0;
+            goto resetinput;
+          }
+        }
+
+        /* now assign the number */
+        assignnumber2(&lhs, xv);
+
+        /* look if there is a comma coming in the buffer and keep it */
+        while (k < (address_t) buffer[0] && buffer[k] != 0) {
+          if (buffer[k] == ',') {
+            k++;
+            break;
+          }
+          k++;
+        }
+        break;
+#ifdef HASAPPLE1
+      case STRINGVAR:
+        /* the destination address of the lefthandside, on the fly create included */
+        getstring(&s, &lhs.name, lhs.i, lhs.j);
+        if (!USELONGJUMP && er) return;
+
+        /* the length of the lefthandside string */
+        if (lhs.i2 == 0) {
+          maxlen = s.strdim - lhs.i + 1;
+        } else {
+          maxlen = lhs.i2 - lhs.i + 1;
+          if (maxlen > s.strdim) maxlen = s.strdim - lhs.i + 1;
+        }
+
+        /* the number of bytes we want to read the form parameter in WIRE can be used
+        	to set the expected number of bytes */
+        if (form != 0 && form < maxlen) maxlen = form;
+
+        /* what is going on */
+        if (DEBUG) {
+          outsc("** input stringcode at "); outnumber(here); outcr();
+          outsc("** input stringcode "); outname(&lhs.name); outcr();
+          outsc("** input stringcode maximum length "); outnumber(maxlen); outcr();
+        }
+
+        /* now read the string inplace */
+        if (prompt) showprompt();
+#ifndef USEMEMINTERFACE
+        newlength = ins(s.ir - 1, maxlen);
+#else
+        newlength = ins(spistrbuf1, maxlen);
+
+        /* if we have a string variable, we need to copy the buffer to the string */
+        if (newlength > 0) {
+          if (s.ir) {
+            for (k = 0; k < newlength; k++) s.ir[k] = spistrbuf1[k + 1];
+          } else {
+            for (k = 0; k < newlength; k++) memwrite2(s.address + k, spistrbuf1[k + 1]);
+          }
+        }
+#endif
+
+        /* if we have a string variable, we need to copy the buffer to the string */
+
+
+        /* set the right string length */
+        /* classical Apple 1 behaviour is string truncation in substring logic */
+        newlength = lhs.i + newlength - 1;
+        setstringlength(&lhs.name, newlength, lhs.j);
+        break;
+#endif
+    }
+  }
+
+  /* seperators and termsymbols */
+  if (token == ',' || token == ';') {
+    nexttoken();
+    goto nextstring;
+  }
+
+  /* no further data */
+  if (!termsymbol()) {
+    error(EUNKNOWN);
+  }
+
+resetinput:
+  id = oldid;
+  form = 0;
+}
+
+/*
+ 	GOTO, GOSUB, RETURN and their helpers
+
+ 	GOTO and GOSUB function for a simple one statement goto
+*/
+void xgoto() {
+  token_t t = token;
+  number_t x;
+
+  if (!expectexpr()) return;
+  if (t == TGOSUB) pushgosubstack(0);
+  if (!USELONGJUMP && er) return;
+
+  x = pop();
+
+  if (DEBUG) {
+    outsc("** goto/gosub evaluated line number ");
+    outnumber(x);
+    outcr();
+  }
+  findline((address_t) x);
+  if (!USELONGJUMP && er) return;
+  if (DEBUG) {
+    outsc("** goto/gosub branches to ");
+    outnumber(here);
+    outcr();
+  }
+
+  /* goto in interactive mode switched to RUN mode
+  		no clearing of variables and stacks */
+  if (st == SINT) st = SRUN;
+}
+
+/*
+ 	RETURN retrieves here from the gosub stack
+*/
+void xreturn() {
+  popgosubstack();
+  if (DEBUG) {
+    outsc("** restored location ");
+    outnumber(here);
+    outcr();
+  }
+  if (!USELONGJUMP && er) return;
+  nexttoken();
+#ifdef HASEVENTS
+  /* we return from an interrupt and reenable them */
+  if (gosubarg[gosubsp] == TEVENT) events_enabled = 1;
+#endif
+}
+
+/*
+ 	IF statement together with THEN
+*/
+void xif() {
+  mem_t nl = 0;
+
+  if (!expectexpr()) return;
+  x = pop();
+  if (DEBUG) {
+    outsc("** in if, condition ");
+    outnumber(x);
+    outcr();
+  }
+
+  /* if can have a new line after the expression in this BASIC */
+  if (token == LINENUMBER) nexttoken();
+
+  /* we only check false which is 0 */
+  if (x == 0)  {
+#ifndef HASSTRUCT
+    /* on condition false skip the entire line and all : until a potential ELSE */
+    while (token != LINENUMBER && token != EOL && token != TELSE) nexttoken();
+#else
+    /* in the structured language set, we need to look for a DO  close to the IF and skip it*/
+    /* a THEN or not and then a line number expects a block */
+    if (token == TTHEN) nexttoken();
+    if (token == LINENUMBER) {
+      nexttoken();
+      nl = 1;
+    }
+
+    /* skip the block */
+    if (token == TDO) {
+      nexttoken();
+      findbraket(TDO, TDEND);
+      nexttoken();
+      goto processelse;
+    }
+
+    /* skip the line */
+    if (!nl) while (token != LINENUMBER && token != EOL && token != TELSE) nexttoken();
+
+processelse:
+#endif
+
+    /* if we have ELSE at this point we want to execute this part of the line as the condition
+    		was false, isolated ELSE is GOTO, otherwise just execute the code */
+
+#ifdef HASSTEFANSEXT
+    /* look if ELSE is at the next line */
+    if (token == LINENUMBER) nexttoken();
+
+    /* now process ELSE */
+    if (token == TELSE) {
+      nexttoken();
+      if (token == NUMBER) {
+        findline((address_t) x);
+        return;
+      }
+    }
+#endif
+  }
+
+  /* a THEN is interpreted as simple one statement goto	if it is followed by a line number*/
+#ifdef HASAPPLE1
+  /* then can be on a new line */
+  if (token == TTHEN) {
+    nexttoken();
+    if (token == NUMBER) {
+      findline((address_t) x);
+    }
+  }
+#endif
+}
+
+/* if else is encountered in the statement line, the rest of the code is skipped
+ 		as else code execution is triggered in the xif function */
+#ifdef HASSTEFANSEXT
+void xelse() {
+  mem_t nl = 0;
+
+#ifndef HASSTRUCT
+  /* skip the entire line */
+  while (token != LINENUMBER && token != EOL) nexttoken();
+#else
+  nexttoken();
+  /* else in a single line */
+  if (token == LINENUMBER) {
+    nexttoken();
+    nl = 1;
+  }
+
+  /* the block after the else on a new line or the current line */
+  if (token == TDO) {
+    nexttoken();
+    findbraket(TDO, TDEND);
+  }
+
+  /* single line else, skip the line */
+  if (!nl) while (token != LINENUMBER && token != EOL) nexttoken();
+
+#endif
+}
+#endif
+
+/*
+ 	FOR, NEXT and the apocryphal BREAK
+
+   find the NEXT token or the end of the program
+*/
+
+/*
+   The generic block scanner, used for structured code and in FOR NEXT.
+   The closing symbol of a symbol is found. Symbol pairs are:
+
+  	FOR NEXT
+  	WHILE WEND
+    REPEAT UNTIL
+  	DO DEND
+    SWITCH SWEND
+
+*/
+void findbraket(token_t bra, token_t ket) {
+  address_t fnc = 0;
+
+  while (1) {
+
+    if (DEBUG) {
+      outsc("** skpping braket ");
+      outputtoken(); outspc();
+      outnumber(here); outspc();
+      outnumber(fnc); outcr();
+    }
+
+    if (token == ket) {
+      if (fnc == 0) return; else fnc--;
+    }
+
+    if (token == bra) fnc++;
+
+    /* no closing symbol found */
+    if (token == EOL) {
+      error(bra);
+      return;
+    }
+    nexttoken();
+  }
+}
+
+/*
+ 	FOR variable [= expression [to expression]] [STEP expression]
+ 	for stores the variable, the increment and the boudary on the
+ 	for stack. Changing steps and boundaries during the execution
+ 	of a loop has no effect.
+
+ 	This is different from many other BASICS as FOR can be used
+ 	as an open loop with no boundary
+*/
+void xfor() {
+  name_t variable;
+  number_t begin = 1;
+  number_t to = maxnum;
+  number_t step = 1;
+
+  /* we need at least a name */
+  if (!expect(VARIABLE, EUNKNOWN)) return;
+  copyname(&variable, &name);
+
+  /*
+     This is not standard BASIC.
+     All combinations of FOR TO STEP are allowed.
+     FOR X : NEXT is an infinite loop.
+     FOR X=1 : NEXT is a loop with X=1 and an infinite loop.
+     FOR X=1 TO 10 : NEXT is a loop with X=1 to 10.
+     FOR X=1 TO 10 STEP 2 : NEXT is a loop with X=1 to 10 in steps of 2.
+     A variable must always be supplyed to indentify the loop.
+     FOR : NEXT is illegal.
+  */
+  nexttoken();
+  if (token == '=') {
+    if (!expectexpr()) return;
+    begin = pop();
+    setvar(&variable, begin);
+  }
+
+  if (token == TTO) {
+    if (!expectexpr()) return;
+    to = pop();
+  }
+
+  if (token == TSTEP) {
+    if (!expectexpr()) return;
+    step = pop();
+  }
+
+  if (!termsymbol()) {
+    error(EUNKNOWN);
+    return;
+  }
+
+  /* in interactive mode we reuse here to store the offset in the buffer */
+  if (st == SINT) here = bi - ibuffer;
+
+  /*  here we know everything to set up the loop */
+
+  if (DEBUG) {
+    outsc("** for loop with parameters var begin end step: ");
+    outname(&variable);
+    outspc(); outnumber(begin);
+    outspc(); outnumber(to);
+    outspc(); outnumber(step);
+    outcr();
+    outsc("** for loop target location "); outnumber(here); outcr();
+  }
+
+  pushloop(&variable, TFOR, here, to, step);
+  if (!USELONGJUMP && er) return;
+
+  /*
+   	This tests the condition and stops if it is fulfilled already from start.
+   	There is another apocryphal feature here: STEP 0 is legal triggers an infinite loop.
+  */
+  if ((step > 0 && getvar(&variable) > to) || (step < 0 && getvar(&variable) < to)) {
+    droploop();
+    findbraket(TFOR, TNEXT);
+    nexttoken();
+    if (token == VARIABLE) nexttoken(); /* This BASIC does not check. */
+  }
+}
+
+/*
+ 	BREAK - an apocryphal feature here is the BREAK command ending a loop
+*/
+#ifdef HASSTRUCT
+void xbreak() {
+  bloop_t* loop;
+
+  loop = activeloop();
+  if (!USELONGJUMP && er) return;
+  switch (loop->var.token) {
+    case TWHILE:
+      findbraket(TWHILE, TWEND);
+      nexttoken();
+      break;
+    case TREPEAT:
+      findbraket(TREPEAT, TUNTIL);
+      while (!termsymbol()) nexttoken();
+      break;
+    default: /* a FOR loop is the default */
+      findbraket(TFOR, TNEXT);
+      nexttoken();
+      if (token == VARIABLE) nexttoken(); /* we are at next and skip the variable check */
+      break;
+  }
+  droploop();
+}
+#else
+void xbreak() {
+  droploop();
+  if (!USELONGJUMP && er) return;
+  findbraket(TFOR, TNEXT);
+  nexttoken();
+  if (token == VARIABLE) nexttoken(); /* we are at next and skip the variable check */
+}
+#endif
+
+/*
+   CONT as a loop control statement, as apocryphal as BREAK, simply
+   advance to next and the continue to process
+*/
+#ifdef HASSTRUCT
+void xcont() {
+  bloop_t* loop;
+
+  loop = activeloop();
+  if (!USELONGJUMP && er) return;
+  switch (loop->var.token) {
+    case TWHILE:
+      findbraket(TWHILE, TWEND);
+      break;
+    case TREPEAT:
+      findbraket(TREPEAT, TUNTIL);
+      break;
+    default: /* a FOR loop is the default */
+      findbraket(TFOR, TNEXT);
+      break;
+  }
+}
+#else
+void xcont() {
+  findbraket(TFOR, TNEXT);
+}
+#endif
+
+/*
+   NEXT variable statement.
+
+   This code uses the global name variable right now for processing of
+   the variable in FOR. The variable name in next is stored in a local variable.
+*/
+
+/* reimplementation of xnext without change of the stack in a running loop */
+
+void xnext() {
+  name_t variable; /* this is a potential variable argument of next */
+  number_t value;
+  bloop_t* loop;
+
+  /* check is we have the variable argument */
+  nexttoken();
+
+  /* one variable is accepted as an argument, no list */
+  if (token == VARIABLE) {
+    if (DEBUG) {
+      outsc("** variable argument ");
+      outname(&name);
+      outcr();
+    }
+
+    copyname(&variable, &name);
+    nexttoken();
+    if (!termsymbol()) {
+      error(EUNKNOWN);
+      return;
+    }
+  } else {
+    variable.c[0] = 0;
+  }
+
+  /* see whats going on */
+  loop = activeloop();
+  if (!USELONGJUMP && er) return;
+
+  /* check if this is really a FOR loop */
+#ifdef HASSTRUCT
+  if (loop->var.token == TWHILE || loop->var.token == TREPEAT) {
+    error(ELOOP);
+    return;
+  }
+#endif
+
+  /* a variable argument in next clears the for stack
+  		down as BASIC programs can and do jump out to an outer next */
+  if (variable.c[0] != 0) {
+    while (!cmpname(&variable, &loop->var)) {
+      droploop();
+      if (!USELONGJUMP && er) return;
+      loop = activeloop();
+      if (!USELONGJUMP && er) return;
+    }
+  }
+
+  /* step=0 an infinite loop */
+  /* this goes through the variable name */
+#ifndef HASLOOPOPT
+  value = getvar(&loop->var) + loop->step;
+  setvar(&loop->var, value);
+#else
+  /* this goes through the stored address and then tries the name (for looping special variables) */
+  if (loop->varaddress) {
+    value = getnumber(loop->varaddress, memread2) + loop->step;
+    setnumber(loop->varaddress, memwrite2, value);
+  } else {
+    value = getvar(&loop->var) + loop->step;
+    setvar(&loop->var, value);
+  }
+#endif
+
+  if (DEBUG) {
+    outsc("** next loop variable "); outname(&loop->var); outspc();
+    outsc(" value "); outnumber(value); outcr();
+  }
+
+  /* do we need another iteration, STEP 0 always triggers an infinite loop */
+  if ((loop->step == 0) || (loop->step > 0 && value <= loop->to) || (loop->step < 0 && value >= loop->to)) {
+    /* iterate in the loop */
+    here = loop->here;
+    /* in interactive mode, jump to the right buffer location */
+    if (st == SINT) bi = ibuffer + here;
+  } else {
+    /* last iteration completed we stay here after the next,
+    	no precaution for SINT needed as bi unchanged */
+    droploop();
+  }
+  nexttoken();
+  if (DEBUG) {
+    outsc("** after next found token ");
+    debugtoken();
+  }
+}
+
+/*
+ 	TOKEN output - this is also used in save.
+   list does a minimal formatting with a simple heuristic.
+
+*/
+void outputtoken() {
+  address_t i;
+
+  if (token == EOL) return;
+
+  if (token == LINENUMBER) outliteral = 0;
+
+  if (token == TREM) outliteral = 1;
+
+  if (spaceafterkeyword) {
+    if (token != '(' &&
+        token != LINENUMBER &&
+        token != ':' &&
+        token != '$') outspc();
+    spaceafterkeyword = 0;
+  }
+
+  switch (token) {
+    case NUMBER:
+      outnumber(x);
+      break;
+    case LINENUMBER:
+      outnumber(ax);
+      outspc();
+      break;
+    case ARRAYVAR:
+    case STRINGVAR:
+    case VARIABLE:
+      if (lastouttoken == NUMBER) outspc();
+      outname(&name);
+      if (token == STRINGVAR) outch('$');
+      break;
+    case STRING:
+      outch('"');
+#ifdef USEMEMINTERFACE
+      if (!sr.ir) getstringtobuffer(&sr, spistrbuf1, SPIRAMSBSIZE);
+#endif
+      outs(sr.ir, sr.length);
+      outch('"');
+      break;
+    default:
+      if ( (token < 32 && token >= BASEKEYWORD) || token < -127) {
+        if ((token == TTHEN ||
+             token == TELSE ||
+             token == TTO ||
+             token == TSTEP ||
+             token == TGOTO ||
+             token == TGOSUB ||
+             token == TOR ||
+             token == TAND) && lastouttoken != LINENUMBER) outspc();
+        else if (lastouttoken == NUMBER || lastouttoken == VARIABLE) {
+          if (token != GREATEREQUAL &&
+              token <= LESSEREQUAL
+              && token != TSHL &&
+              token != TSHR
+             ) outspc();
+        }
+
+        for (i = 0; gettokenvalue(i) != 0 && gettokenvalue(i) != token; i++);
+        outsc(getkeyword(i));
+        if (token != GREATEREQUAL &&
+            token != NOTEQUAL &&
+            token != LESSEREQUAL &&
+            token != TSHL &&
+            token != TSHR &&
+            token != TREM &&
+            token != TFN) spaceafterkeyword = 1;
+        break;
+      }
+      if (token >= 32) {
+        outch(token);
+        if (token == ':' && !outliteral) outspc();
+        break;
+      }
+      outch(token); outspc(); outnumber(token);
+  }
+
+  lastouttoken = token;
+}
+
+/*
+   LIST programs to an output device.
+
+   The output is formatted to fit the screen, the heuristic is simple.
+
+*/
+
+void listlines(address_t b, address_t e) {
+  mem_t oflag = 0;
+  address_t here2 = here;
+
+  /* global variables controlling outputtoken, reset to default */
+  lastouttoken = 0;
+  spaceafterkeyword = 0;
+
+  /* if there is a programm ... */
+  if (top != 0) {
+    here = 0;
+    gettoken();
+    while (here < top) {
+      if (token == LINENUMBER && ax >= b) oflag = 1;
+      if (token == LINENUMBER && ax >  e) oflag = 0;
+      if (oflag) outputtoken();
+      gettoken();
+      if (token == LINENUMBER && oflag) {
+        outcr();
+        /* wait after every line on small displays
+           removed if ( dspactive() && (dsp_rows < 10) ){ if ( inch() == 27 ) break;} */
+        if (dspactive() && dspwaitonscroll() == 27) break;
+      }
+    }
+    if (here == top && oflag) outputtoken();
+    if (e == maxaddr || b != e) outcr(); /* supress newlines in "list 50" - a little hack */
+  }
+
+  if (st != SINT) here = here2;
+}
+
+void xlist() {
+  address_t b, e;
+
+  /* get the argument */
+  nexttoken();
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+
+  /* parse the arguments */
+  switch (args) {
+    case 0:
+      b = 0;
+      e = maxaddr;
+      break;
+    case 1:
+      b = pop();
+      e = b;
+      break;
+    case 2:
+      e = pop();
+      b = pop();
+      break;
+    default:
+      error(EARGS);
+      return;
+  }
+
+  /* list the line from b to e in the default output device */
+  listlines(b, e);
+
+  /* we are done */
+  nexttoken();
+}
+
+/*
+   The progam line editor, first version. The code is
+   not save for BUFSIZE greater than 127. A cast to
+   unsigned char aka uint8_t is needed for the string
+   length as some platforms have a signed char and some
+   don't.
+*/
+void xedit() {
+  mem_t ood = od;
+  address_t line;
+  address_t l;
+  int i, k, j;
+  char ch;
+
+  /* we edit only in interactive mode */
+  if (st != SINT) {
+    error(EUNKNOWN);
+    return;
+  }
+
+  /* currently only one line number */
+  if (!expectexpr()) {
+    error(EARGS);
+    return;
+  }
+
+  /* this uses the input buffer now */
+  line = pop();
+undo: /* this is the undo point */
+  ibuffer[0] = 0;
+  ibuffer[1] = 0;
+  od = 0;
+  listlines(line, line);
+  if (ibuffer[0] == 0) {
+    outnumber(line);
+    outspc();
+  }
+  od = ood;
+
+  /* set the cursor to the first character */
+  l = 1;
+
+  /* editing loop for blocking and non blocking terminals */
+  while (-1) {
+
+    /* show the line and indicate the cursor */
+    for (i = 1; i <= (unsigned char)ibuffer[0]; i++) outch(ibuffer[i]);
+    outcr();
+    for (i = 0; i < l - 1; i++) outspc();
+    outch('^');
+    outcr();
+
+    /* get a bunch of editing commands and process them*/
+    i = ins(sbuffer, SBUFSIZE);
+    for (k = 1; k <= i; k++) {
+      ch = sbuffer[k];
+      switch (ch) {
+        case 'q': /* quit the editor*/
+          goto done;
+        case 'Q': /* end the editor without saving */
+          goto endnosave;
+          break;
+        case 'X': /* delete from cursor until the end of the line */
+          ibuffer[0] = (char)l;
+          ibuffer[l] = 0;
+          break;
+        case 'j': /* vi style left */
+          if (l > 1) l--;
+          break;
+        case 'k': /* vi style right */
+          if (l < (unsigned char)ibuffer[0]) l++;
+          break;
+        case 'x': /* delete the cursor character */
+          if ((unsigned char)ibuffer[0] > 0) {
+            for (j = l; j < (unsigned char)ibuffer[0]; j++) ibuffer[j] = ibuffer[j + 1];
+            ibuffer[j] = 0;
+            ibuffer[0] = (unsigned char)ibuffer[0] - 1;
+          }
+          if ((unsigned char)ibuffer[0] < l) l = (unsigned char)ibuffer[0];
+          break;
+        case 's': /* substitute one character at the cursor position */
+          if (k < i) {
+            k++;
+            ibuffer[l] = sbuffer[k];
+          }
+          break;
+        case 'a': /* append multiple characters at the end of the line */
+          l = (unsigned char)ibuffer[0] + 1;
+        case 'i': /* insert multiple characters at the cursor position */
+          if (i - k + (unsigned char)ibuffer[0] < BUFSIZ) {
+            for (j = i - k + (unsigned char)ibuffer[0]; j >= l; j--) {
+              ibuffer[j + i - k] = ibuffer[j];
+              if (j <= l + i - k) ibuffer[j] = sbuffer[k + 1 + (j - l)];
+            }
+          }
+          ibuffer[0] = (unsigned char)ibuffer[0] + i - k;
+          k = i;
+          break;
+        case '^': /* vi style start of line */
+          l = 1;
+          break;
+        case '$': /* vi style end of line */
+          l = (unsigned char)ibuffer[0] + 1;
+          break;
+        case 'h': /* vi style backspace */
+          if (l > 1) {
+            for (j = l - 1; j < (unsigned char)ibuffer[0]; j++) ibuffer[j] = ibuffer[j + 1];
+            ibuffer[j] = 0;
+            ibuffer[0] = (unsigned char)ibuffer[0] - 1;
+            l--;
+          }
+          break;
+        case 'u': /* vi style undo */
+          goto undo;
+          break;
+        case ':':  /* find the next colon : character*/
+          if (l <= (unsigned char)ibuffer[0]) {
+            while (l <= (unsigned char)ibuffer[0] && ibuffer[l] != ':') l++;
+            if (l <= (unsigned char)ibuffer[0]) l++;
+          }
+          break;
+        default: /* do nothing if the character is not recogized */
+          break;
+      }
+    }
+  }
+
+  /* try to store the line, may heaven help us */
+done:
+  bi = ibuffer;
+  st = SINT;
+  nexttoken();
+  if (token == NUMBER) {
+    ax = x;
+    storeline();
+  }
+
+  /* and we are done, restore the output device and clean the buffer  */
+endnosave:
+  ibuffer[0] = 0;
+  ibuffer[1] = 0;
+  bi = ibuffer + 1;
+  nexttoken();
+}
+
+/*
+ 	RUN and CONTINUE are the same function
+*/
+void xrun() {
+  if (token == TCONT) {
+    st = SRUN;
+    nexttoken();
+  } else {
+    nexttoken();
+    parsearguments();
+    if (er != 0 ) return;
+    if (args > 1) {
+      error(EARGS);
+      return;
+    }
+    if (args == 0) {
+      here = 0;
+    } else {
+      findline(pop());
+    }
+    if (!USELONGJUMP && er) return;
+    if (st == SINT) st = SRUN;
+
+    /* all reset on run */
+    clrvars();
+    clrgosubstack();
+    clrforstack();
+    clrdata();
+    clrlinecache();
+    ert = 0;
+    ioer = 0;
+    fncontext = 0;
+#ifdef HASEVENTS
+    resettimer(&every_timer);
+    resettimer(&after_timer);
+    events_enabled = 1;
+#endif
+
+    nexttoken();
+  }
+
+  /* once statement is called it stays into a loop until the token stream
+  		is exhausted. Then we return to interactive mode. */
+  statement();
+  st = SINT;
+  /* flush the EEPROM when changing to interactive mode */
+  eflush();
+
+  /* if called from command line with file arg - exit after run */
+#ifdef HASARGS
+  if (bnointafterrun) restartsystem();
+#endif
+}
+
+/*
+   a simple help function for the help command, will be extended to
+   a more sophisticated help system in the future
+*/
+void xhelp() {
+  int i;
+  nexttoken();
+  if (token == EOL) {
+    displaybanner();
+    outsc(getmessage(MKEYWORDS));
+    for (i = 0; gettokenvalue(i) != 0; i++) {
+      outsc(getkeyword(i));
+      outch(' ');
+      if (i % 8 == 7) outcr();
+    }
+    outcr();
+  } else {
+    if (token < 31 && token >= BASEKEYWORD) { /* attention, doesn't work with long tokens */
+      outputtoken();
+      outsc(": ");
+      outcr();
+    }
+    nexttoken();
+  }
+}
+
+/* 
+ * The camera control command for ESP32 cameras and similar MCU cams
+ * currently only a stub, no functionality, just to shape the syntax
+ */
+#ifdef HASCAMERA
+void xcam() {
+  nexttoken(); 
+  switch(token) {
+    case TGET: /* get an image from the camera to the buffer */
+      nexttoken();
+//      cameraget();
+      break;
+    case TSET: /* set the camera parameters */
+      nexttoken();
+//      cameraset();
+      break;
+    case TSAVE: /* save the image to the filesystem */
+      nexttoken();
+//      camerasave();
+      break;
+  }
+  while(!termsymbol()) nexttoken();
+}
+#endif
+/*
+   NEW the general cleanup function - new deletes everything
+
+   restbasicstate() is a helper, it keeps the memory intact
+  	this is needed for EEPROM direct memory
+*/
+void resetbasicstate() {
+
+  if (DEBUG) {
+    outsc("** BASIC state reset \n");
+  }
+
+  /* all stacks are purged */
+  clearst();
+  clrgosubstack();
+  clrforstack();
+  clrdata();
+  clrvars();
+  clrlinecache();
+
+  /* error status reset */
+  reseterror();
+
+  /* let here point to the beginning of the program */
+  here = 0;
+
+  /* function context back to zero */
+  fncontext = 0;
+
+  /* interactive mode */
+  st = SINT;
+
+  /* switch off timers and interrupts */
+#ifdef HASTIMER
+  resettimer(&after_timer);
+  resettimer(&every_timer);
+#endif
+
+}
+
+void xnew() {
+
+  /* reset the state of the interpreter */
+  resetbasicstate();
+
+
+  if (DEBUG) {
+    outsc("** clearing memory ");
+    outnumber(memsize);
+    outsc(" bytes \n");
+  }
+
+  /* program memory back to zero and variable heap cleared */
+  himem = memsize;
+  zeroblock(0, memsize);
+  top = 0;
+
+  if (DEBUG) outsc("** clearing EEPROM state \n ");
+  /* on EEPROM systems also clear the stored state and top */
+#ifdef EEPROMMEMINTERFACE
+  eupdate(0, 0);
+  setaddress(1, beupdate, top);
+#endif
+}
+
+/*
+ 	REM - skip everything
+*/
+void xrem() {
+  if (debuglevel == -1) outsc("REM: ");
+  while (token != LINENUMBER && token != EOL && here <= top)
+  {
+    nexttoken();
+    if (debuglevel == -1) {
+      if (token != LINENUMBER) outputtoken(); else outcr();
+    }
+  }
+}
+
+/*
+ 	The Apple 1 BASIC additions
+   CLR, DIM, POKE, TAB
+*/
+
+/*
+ 	CLR - clearing variable space
+*/
+void xclr() {
+
+#ifdef HASDARKARTS
+  name_t variable;
+
+  nexttoken();
+
+  if (termsymbol()) {
+    clrvars();
+    clrgosubstack();
+    clrforstack();
+    clrdata();
+    clrlinecache();
+    ert = 0;
+    ioer = 0;
+  } else {
+    copyname(&variable, &name);
+    switch (variable.token) {
+      case VARIABLE:
+        if (variable.c[0] == '@') {
+          return;
+        }
+        break;
+      case ARRAYVAR:
+        nexttoken();
+        if (token != '(') {
+          error(EVARIABLE);
+          return;
+        }
+        nexttoken();
+        if (token != ')') {
+          error(EVARIABLE);
+          return;
+        }
+        break;
+      case STRINGVAR:
+        if (variable.c[0] == '@') {
+          error(EVARIABLE);
+          return;
+        }
+        break;
+      case TGOSUB:
+        clrgosubstack();
+        goto next;
+      case TFOR:
+        clrforstack();
+        goto next;
+      case TEVERY:
+        resettimer(&every_timer);
+        goto next;
+      case TAFTER:
+        resettimer(&after_timer);
+        goto next;
+      default:
+        expression();
+        if (!USELONGJUMP && er) return;
+        ax = pop();
+        variable.c[0] = ax % 256;
+        variable.c[1] = ax / 256;
+        variable.token = TBUFFER;
+    }
+
+    /* we have to clear an object, call free */
+    ax = bfree(&variable);
+    if (ax == 0) {
+      if (variable.token != TBUFFER) {
+        error(EVARIABLE);
+        return;
+      }
+      else ert = 1;
+    }
+  }
+next:
+#else
+  clrvars();
+  clrgosubstack();
+  clrforstack();
+  clrdata();
+  clrlinecache();
+  ert = 0;
+  ioer = 0;
+#endif
+
+  nexttoken();
+}
+
+#ifdef HASAPPLE1
+/*
+ 	DIM - the dimensioning of arrays and strings from Apple 1 BASIC
+*/
+void xdim() {
+  name_t variable;
+  address_t x;
+  address_t y = 1;
+
+  /* which object should be dimensioned or created */
+  nexttoken();
+
+nextvariable:
+  if (token == ARRAYVAR || token == STRINGVAR ) {
+
+    /* remember the object, direct assignment of struct for the moment */
+    copyname(&variable, &name);
+
+    if (DEBUG)	{
+      outsc("** in xdim "); outname(&variable); outspc(); outnumber(variable.token);
+      outspc(); outname(&name); outspc(); outnumber(name.token); outcr();
+    }
+
+    /* parse the arguments */
+    parsesubscripts();
+    if (!USELONGJUMP && er) return;
+
+#ifndef HASMULTIDIM
+    if (args != 1) {
+      error(EARGS);
+      return;
+    }
+    x = popaddress();
+#else
+    if (args != 1 && args != 2) {
+      error(EARGS);
+      return;
+    }
+    if (args == 2) y = popaddress();
+    x = popaddress();
+#endif
+
+    /* we create at least one element */
+    if (x < 1 || y < 1) {
+      error(EORANGE);
+      return;
+    }
+
+    /* various checks - do we have enough space in buffers and string indices */
+    if (variable.token == STRINGVAR) {
+      if ((x > 255) && (strindexsize == 1)) {
+        error(EORANGE);
+        return;
+      }
+#ifdef SPIRAMSBSIZE
+      if (x > SPIRAMSBSIZE - 1) {
+        error(EORANGE);
+        return;
+      }
+#endif
+      /* With the substringmode switched off, if only one argument is given
+      	we interpret the argument as the string array dimension and not as
+      	the length two arguments are allowed and work as always. This makes
+      	things more compatible to the Microsoft BASIC world. */
+      if (!substringmode)
+        if (args == 1) {
+          y = x;
+          x = defaultstrdim;
+        }
+
+      (void) createstring(&variable, x, y);
+    } else {
+      (void) createarray(&variable, x, y);
+    }
+    if (!USELONGJUMP && er) return;
+
+  } else if (token == VARIABLE) {
+    (void) bmalloc(&name, 0); /* this is a local variable, currently no safety net */
+  } else {
+    error(EUNKNOWN);
+    return;
+  }
+
+  nexttoken();
+  if (token == ',') {
+    nexttoken();
+    goto nextvariable;
+  }
+
+  nexttoken();
+}
+
+
+/*
+ 	POKE - low level poke to the basic memory.
+    on 16bit systems, the address is signed, so we can only go up to 32767.
+    If the address is negative, we poke into the EEPROM.
+*/
+void xpoke() {
+  number_t a, v;
+
+  /* get the address and the value */
+  nexttoken();
+  parsenarguments(2);
+  if (!USELONGJUMP && er) return;
+
+  v = pop(); /* the value */
+  a = pop(); /* the address */
+
+  /* catch memsize here because memwrite doesn't do it */
+#ifdef STM32 
+  if (a >= 0 && a <= memsize)
+    vcs_memwrite2(a, v);
+  else if (a < 0 && a >= -memsize)
+    memwrite2(-a, v);
+#else
+  if (a >= 0 && a <= memsize)
+    memwrite2(a, v);
+  else if (a < 0 && a >= -elength())
+    eupdate(-a - 1, v);
+#endif
+  else {
+    error(EORANGE);
+  }
+}
+
+/*
+ 	TAB - spaces command of Apple 1 BASIC
+  		charcount mechanism for relative tab if HASMSTAB is set
+*/
+void xtab() {
+  address_t a;
+  number_t tmp;
+  token_t t = token;
+
+  /* get the number of spaces, we allow brackets here to use xtab also in PRINT */
+  nexttoken();
+  if (token == '(') nexttoken();
+  parsenarguments(1);
+  if (!USELONGJUMP && er) return;
+  if (token == ')') nexttoken();
+
+  /* we handle negative values here */
+  tmp = pop();
+  if (!USELONGJUMP && er) return;
+
+  /* negative tabs mapped to 0 */
+  if (tmp < 0) t = 0;
+  a = tmp;
+
+  /* the runtime environment can do a true tab then ...  */
+#ifdef HASMSTAB
+  if (t != TSPC && reltab && od <= OPRT && od >= 0) {
+    if (charcount[od] >= a) a = 0; else a = a - charcount[od] - 1;
+  }
+#endif
+
+  /* debug output */
+  if (DEBUG) {
+    outsc("** tabbing ");
+    outnumber(a);
+    outsc(" spaces ");
+    outsc(" charcount");
+    outnumber(charcount[od - 1]);
+    outcr();
+  }
+
+  /* output the spaces */
+  while (a-- > 0) outspc();
+}
+#endif
+
+/*
+   locate the curor on the screen
+*/
+
+void xlocate() {
+  address_t cx, cy;
+
+  nexttoken();
+  parsenarguments(2);
+  if (!USELONGJUMP && er) return;
+
+  cy = popaddress();
+  cx = popaddress();
+  if (!USELONGJUMP && er) return;
+
+  /* for locate we go through the VT52 interface for cursor positioning*/
+  if (cx > 0 && cy > 0 && cx < 224 && cy < 224) {
+    outch(27); outch('Y');
+    outch(31 + (unsigned int) cy);
+    outch(31 + (unsigned int) cx);
+  }
+
+  /* set the charcount, this is half broken on escape sequences */
+#ifdef HASMSTAB
+  if (od >= 0 && od <= OPRT) charcount[od] = cx;
+#endif
+
+}
+
+/*
+ 	Stefan's additions to Palo Alto BASIC
+   DUMP, SAVE, LOAD, GET, PUT, SET
+*/
+
+/*
+ 	DUMP - memory dump program
+*/
+void xdump() {
+  address_t a, x;
+  char eflag = 0;
+
+  nexttoken();
+  if (token == '!') {
+    eflag = 1;
+    nexttoken();
+  }
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+
+  switch (args) {
+    case 0:
+      x = 0;
+      a = memsize;
+      break;
+    case 1:
+      x = pop();
+      a = memsize;
+      break;
+    case 2:
+      a = pop();
+      x = pop();
+      break;
+    default:
+      error(EARGS);
+      return;
+  }
+
+  form = 6;
+  if (a > x) dumpmem((a - x) / 8 + 1, x, eflag);
+  form = 0;
+}
+
+/*
+   helper of DUMP, wrote the memory out
+*/
+void dumpmem(address_t r, address_t b, char eflag) {
+  address_t j, i;
+  address_t k;
+  mem_t c;
+  address_t end;
+
+  k = b;
+  i = r;
+  if (eflag) end = elength(); else end = memsize;
+  while (i > 0) {
+    outnumber(k); outspc();
+    for (j = 0; j < 8; j++) {
+      if (eflag) c = eread(k); else c = memread(k);
+      k++;
+      outnumber(c); outspc();
+      if (k > end) break;
+    }
+    outcr();
+    i--;
+    if (k > end) break;
+  }
+  if (eflag) {
+    outsc("elength: "); outnumber(elength()); outcr();
+  } else {
+    outsc("top: "); outnumber(top); outcr();
+    outsc("himem: "); outnumber(himem); outcr();
+  }
+}
+
+/*
+ 	Creates a C string from a BASIC string after reading a BASIC string.
+  This function handles strings up to SBUFFERSIZE - 1 characters long.
+  It is used in commands that convert strings like VAL and in handling
+  filenames. 
+*/
+void stringtobuffer(char *buffer, string_t* s) {
+  index_t i = s->length;
+
+  if (i >= SBUFSIZE) { i = SBUFSIZE - 1; ert=1; }
+  buffer[i--] = 0;
+  while (i >= 0) {
+    buffer[i] = s->ir[i];
+    i--;
+  }
+}
+
+/* helper for the memintercase code */
+void getstringtobuffer(string_t* strp, char *buffer, stringlength_t maxlen) {
+  stringlength_t i;
+
+  for (i = 0; i < strp->length && i < maxlen; i++) buffer[i] = memread2(strp->address + i);
+  strp->ir = buffer;
+}
+
+/* get a file argument */
+void getfilename(char *buffer, char d) {
+  index_t s;
+  char *sbuffer;
+  string_t sr;
+
+  /* do we have a string argument? */
+  s = stringvalue(&sr);
+  if (!USELONGJUMP && er) return;
+  if (DEBUG) {
+    outsc("** in getfilename2 stringvalue delivered ");
+    outnumber(s);
+    outcr();
+  }
+
+  if (s) {
+    if (DEBUG) {
+      outsc("** in getfilename2 copying string of length ");
+      outnumber(x);
+      outcr();
+    }
+#ifdef USEMEMINTERFACE
+    if (!sr.ir) getstringtobuffer(&sr, spistrbuf1, SPIRAMSBSIZE);
+#endif
+    stringtobuffer(buffer, &sr);
+    if (DEBUG) {
+      outsc("** in getfilename2 stringvalue string ");
+      outsc(buffer);
+      outcr();
+    }
+    nexttoken();
+  } else if (termsymbol()) {
+    if (d) {
+      sbuffer = getmessage(MFILE);
+      s = 0;
+      while ((sbuffer[s] != 0) && (s < SBUFSIZE - 1)) {
+        buffer[s] = sbuffer[s];
+        s++;
+      }
+      buffer[s] = 0;
+      x = s;
+    } else {
+      buffer[0] = 0;
+      x = 0;
+    }
+    nexttoken();
+  } else {
+    expression();
+    if (!USELONGJUMP && er) return;
+    buffer[0] = pop();
+    buffer[1] = 0;
+  }
+}
+
+/*
+   an alternative getfilename implementation that simply gives back a buffer
+   with the filename in it. We avoid a string buffer in the calling commands
+   like SAVE and LOAD.
+*/
+char* getfilename2(char d) {
+  mem_t s;
+  string_t sr;
+
+  /* we have no argument and use the default */
+  if (termsymbol()) {
+    if (d) return getmessage(MFILE);
+    else return 0;
+  }
+
+  /* we have a string argument or an expression */
+  s = stringvalue(&sr);
+  if (!USELONGJUMP && er) return 0;
+  if (s) {
+#ifdef USEMEMINTERFACE
+    if (!sr.ir) getstringtobuffer(&sr, sbuffer, SBUFSIZE);
+#endif
+    nexttoken(); /* undo the rewind of stringvalue, only then use the buffer */
+    for (s = 0; s < sr.length && s < SBUFSIZE - 1; s++) sbuffer[s] = sr.ir[s];
+    sbuffer[s] = 0;
+    return sbuffer;
+  } else {
+    expression();
+    if (!USELONGJUMP && er) return 0;
+    sbuffer[0] = pop();
+    sbuffer[1] = 0;
+    return sbuffer;
+  }
+}
+
+#if defined(FILESYSTEMDRIVER)
+/*
+ 	SAVE a file either to disk or to EEPROM
+*/
+void xsave() {
+  char *filename;
+  address_t here2;
+  token_t t;
+
+  nexttoken();
+  filename = getfilename2(1);
+  if (!USELONGJUMP && er) return;
+  t = token;
+
+  if (filename[0] == '!') {
+    esave();
+  } else {
+    if (DEBUG) {
+      outsc("** Opening the file ");
+      outsc(filename);
+      outcr();
+    };
+
+    if (!ofileopen(filename, "w")) {
+      error(EFILE);
+      return;
+    }
+
+    /* save the output mode and then save */
+    push(od);
+    od = OFILE;
+
+    /* the core save - xlist() not used any more */
+    ert = 0; /* reset error to trap file problems */
+    here2 = here;
+    here = 0;
+    gettoken();
+    while (here < top) {
+      outputtoken();
+      if (ert) break;
+      gettoken();
+      if (token == LINENUMBER) outcr();
+    }
+    if (here == top) outputtoken();
+    outcr();
+
+    /* back to where we were */
+    here = here2;
+
+    /* restore the output mode */
+    od = pop();
+
+    /* clean up */
+    ofileclose();
+
+    /* did an accident happen */
+    if (ert) {
+      printmessage(EGENERAL);
+      outcr();
+      ert = 0;
+    }
+  }
+
+  /* and continue remembering, where we were */
+  token = t;
+}
+
+/*
+   LOAD a file, LOAD can either be invoked with a filename argument
+   or without, in the latter case the filename is read from the token stream
+   with getfilename.
+*/
+void xload(const char* f) {
+  char* filename;
+  char ch;
+  address_t here2;
+  mem_t chain = 0;
+
+  if (f == 0) {
+    nexttoken();
+    filename = getfilename2(1);
+    if (!USELONGJUMP && er) return;
+  } else {
+    filename = (char*)f;
+  }
+
+  if (filename[0] == '!') {
+    eload();
+  } else {
+
+    /*
+       If load is called during runtime it merges
+     	the program as new but perserve the variables
+     	gosub and for stacks are cleared. This is incomplete
+        as there is one side effect. Functions are not cleared
+        as they are stored in the heap. If lines are overwritten
+        by the merge, the function pointers in the heap become
+        invalid. There is no safety net for this in the current
+    */
+    if (st == SRUN) {
+      chain = 1;
+      st = SINT;
+      top = 0;
+      clrgosubstack();
+      clrforstack();
+      clrdata();
+    }
+
+    if (!f)
+      if (!ifileopen(filename)) {
+        error(EFILE);
+        return;
+      }
+
+    bi = ibuffer + 1;
+    while (fileavailable()) {
+      ch = fileread();
+
+      if (ch == '\n' || ch == '\r' || cheof(ch)) {
+        *bi = 0;
+        bi = ibuffer + 1;
+        if (*bi != '#') { /* lines starting with a # are skipped - Unix style shell startup */
+          nexttoken();
+          if (token == NUMBER) {
+            ax = x;
+            storeline();
+          }
+          if (er != 0 ) break;
+          bi = ibuffer + 1;
+        }
+      } else {
+        *bi++ = ch;
+      }
+
+      if ((bi - ibuffer) > BUFSIZE) {
+        error(EOUTOFMEMORY);
+        break;
+      }
+    }
+    ifileclose();
+    /* after a successful load we save top to the EEPROM header */
+#ifdef EEPROMMEMINTERFACE
+    setaddress(1, beupdate, top);
+#endif
+
+    /* go back to run mode and start from the first line */
+    if (chain) {
+      st = SRUN;
+      here = 0;
+      nexttoken();
+    }
+  }
+}
+#else
+/*
+ 	SAVE a file to EEPROM - minimal version for small Arduinos
+*/
+void xsave() {
+  esave();
+  nexttoken();
+}
+/*
+ 	LOAD a file from EEPROM - minimal version for small Arduinos
+*/
+void xload(const char* f) {
+  eload();
+  nexttoken();
+}
+#endif
+
+/*
+ 	GET just one character from input
+*/
+void xget() {
+
+  /* identifier of the lefthandside */
+  lhsobject_t lhs;
+
+  mem_t oid = id; /* remember the input stream */
+  char ch;
+
+  nexttoken();
+
+  /* modifiers of the get statement */
+  if (token == '&') {
+
+    if (!expectexpr()) return;
+    id = pop();
+    if (token != ',') {
+      error(EUNKNOWN);
+      return;
+    }
+    nexttoken();
+  }
+
+  /* this code evaluates the left hand side - remember type and name */
+  copyname(&lhs.name, &name);
+
+  lefthandside(&lhs);
+  if (!USELONGJUMP && er) return;
+
+  /* get the data, non blocking on Arduino */
+  if (availch()) ch = inch(); else ch = 0;
+
+  /* store the data element as a number expect for */
+  assignnumber2(&lhs, ch);
+
+  /* but then, strings where we deliver a string with length 0 if there is no data */
+#ifdef HASAPPLE1
+  if (lhs.name.token == STRINGVAR && ch == 0 && lhs.ps) setstringlength(&lhs.name, 0, arraylimit);
+#endif
+
+  /* restore the output device */
+  id = oid;
+}
+
+/*
+ 	PUT writes one character to an output stream
+*/
+void xput() {
+  mem_t ood = od;
+  index_t i;
+
+  nexttoken();
+
+  /* modifiers of the put statement */
+  if (token == '&') {
+
+    if (!expectexpr()) return;
+    od = pop();
+    if (token != ',') {
+      error(EUNKNOWN);
+      return;
+    }
+    nexttoken();
+  }
+
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+
+  for (i = args - 1; i >= 0; i--) sbuffer[i] = pop();
+  outs(sbuffer, args);
+
+  od = ood;
+}
+
+/* setpersonality is a helper of xset */
+void setpersonality(index_t p) {
+#ifdef HASAPPLE1
+  switch (p) {
+    /* a Microsoft like BASIC have arrays starting at 0 with n+1 elements and no substrings, MS type RND */
+    case 'm':
+    case 'M':
+      msarraylimits = 1;
+      arraylimit = 0;
+      substringmode = 0;
+      booleanmode = -1;
+      randombase = -1;
+      reltab = 1;
+      break;
+    /* an Apple 1 like BASIC have arrays starting at 1 with n elements and substrings */
+    case 'a':
+    case 'A':
+      msarraylimits = 0;
+      arraylimit = 1;
+      substringmode = 1;
+      booleanmode = 1;
+      randombase = 0;
+      reltab = 0;
+      break;
+    /* PaloAlto BASIC is an integer basic with slightly different behaviour */
+    case 'p':
+    case 'P':
+      msarraylimits = 0;
+      arraylimit = 0;
+      substringmode = 1;
+      booleanmode = 1;
+      forceint = 1;
+      randombase = 1;
+      reltab = 0;
+      break;
+  }
+#endif
+}
+
+/*
+ 	SET - the command itself is also apocryphal it is a low level
+ 	control command setting certain properties
+ 	syntax, currently it is only SET expression, expression
+*/
+void xset() {
+  address_t function;
+  index_t argument;
+
+  nexttoken();
+  parsenarguments(2);
+  if (!USELONGJUMP && er) return;
+
+  argument = pop();
+  function = pop();
+  switch (function) {
+    /* runtime debug level */
+    case 0:
+      debuglevel = argument;
+      break;
+    /* autorun/run flag of the EEPROM 255 for clear, 0 for prog, 1 for autorun */
+    /* eflush() is needed to make sure the change is written immediately */
+    /* the bdelay is only for protection of the eeprom against tight loops doing SET 1,x */
+    case 1:
+      eupdate(0, argument);
+      eflush();
+      bdelay(1000);
+      break;
+    /* change the output device */
+    case 2:
+      switch (argument) {
+        case 0:
+          od = OSERIAL;
+          break;
+        case 1:
+          od = ODSP;
+          break;
+      }
+      break;
+    /* change the default output device */
+    case 3:
+      switch (argument) {
+        case 0:
+          od = (odd = OSERIAL);
+          break;
+        case 1:
+          od = (odd = ODSP);
+          break;
+      }
+      break;
+    /* change the input device */
+    case 4:
+      switch (argument) {
+        case 0:
+          id = ISERIAL;
+          break;
+        case 1:
+          id = IKEYBOARD;
+          break;
+      }
+      break;
+    /* change the default input device */
+    case 5:
+      switch (argument) {
+        case 0:
+          idd = (id = ISERIAL);
+          break;
+        case 1:
+          idd = (id = IKEYBOARD);
+          break;
+      }
+      break;
+#ifdef HASSERIAL1
+    /* set the cr behaviour */
+    case 6:
+      sendcr = (char)argument;
+      break;
+    /* set the blockmode behaviour */
+    case 7:
+      blockmode = argument;
+      break;
+    /* set the second serial ports baudrate */
+    case 8:
+      prtset(argument);
+      break;
+#endif
+      /* set the power amplifier level of the radio module */
+#ifdef HASRF24
+    case 9:
+      radioset(argument);
+      break;
+#endif
+      /* display update control for paged displays */
+#ifdef DISPLAYDRIVER
+    case 10:
+      dspsetupdatemode(argument);
+      break;
+#endif
+      /* change the output device to a true TAB */
+#ifdef HASMSTAB
+    case 11:
+      reltab = argument;
+      break;
+#endif
+      /* change the lower array limit */
+#ifdef HASAPPLE1
+    case 12:
+      if (argument >= 0) arraylimit = argument; else error(EORANGE);
+      break;
+#endif
+      /* the keyboard repeat frequency */
+#ifdef HASKEYPAD
+    case 13:
+      kbdrepeat = argument;
+      break;
+#endif
+      /* the units the pulse command is using */
+#ifdef HASPULSE
+    case 14:
+      bpulseunit = argument;
+      break;
+#endif
+      /* switch on the vt52 emulation an a POSIX system with an ANSI terminal */
+#ifdef POSIXVT52TOANSI
+    case 15:
+      vt52active = argument;
+      break;
+#endif
+      /* change the default size of a string at autocreate */
+#ifdef HASAPPLE1
+    case 16:
+      if (argument > 0) defaultstrdim = argument; else error(EORANGE);
+      break;
+#endif
+    /* set the boolean mode */
+    case 17:
+      if (argument == -1 || argument == 1) booleanmode = argument; else error(EORANGE);
+      break;
+    /* set the integer mode */
+    case 18:
+      forceint = (argument != 0);
+      break;
+    /* set the random number behaviour */
+    case 19:
+      randombase = argument;
+      break;
+      /* the substring mode on and off */
+#ifdef HASAPPLE1
+    case 20:
+      substringmode = (argument != 0);
+      break;
+#endif
+      /* the MS array behaviour, creates n+1 elements when on */
+#ifdef HASAPPLE1
+    case 21:
+      msarraylimits = (argument != 0);
+      break;
+#endif
+    /* set many settings at once to change the entire personality of the interpreter */
+    case 22:
+      setpersonality(argument);
+      break;
+#ifdef HASAPPLE1
+    case 23:
+      lowercasenames = (argument != 0);
+      break;
+#endif
+#ifdef HASFLOAT
+    case 24:
+      precision = argument;
+      break;
+#endif
+  }
+}
+
+/*
+ 	NETSTAT - network status command, rudimentary
+*/
+void xnetstat() {
+#if defined(HASMQTT)
+
+  nexttoken();
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+
+  switch (args) {
+    case 0:
+      if (netconnected()) outsc("Network connected \n"); else outsc("Network not connected \n");
+      outsc("MQTT state "); outnumber(mqttstate()); outcr();
+      outsc("MQTT out topic "); outsc(mqtt_otopic); outcr();
+      outsc("MQTT inp topic "); outsc(mqtt_itopic); outcr();
+      outsc("MQTT name "); outsc(mqttname); outcr();
+      break;
+    case 1:
+      ax = pop();
+      switch (ax) {
+        case 0:
+          netstop();
+          break;
+        case 1:
+          netbegin();
+          break;
+        case 2:
+          if (!mqttreconnect()) ert = 1;
+          break;
+        default:
+          error(EARGS);
+          return;
+      }
+      break;
+    default:
+      error(EARGS);
+      return;
+  }
+#endif
+  nexttoken();
+}
+
+/*
+   The arduino io functions.
+
+*/
+
+/*
+    rtaread and rtdread are wrappers coming from runtime
+    This is done for portability for raspberry pi and other systems
+*/
+
+void xaread() {
+  push(aread(popaddress()));
+}
+
+void xdread() {
+  push(dread(popaddress()));
+}
+
+/*
+ 	DWRITE - digital write
+*/
+void xdwrite() {
+  address_t x, y;
+
+  nexttoken();
+  parsenarguments(2);
+  if (!USELONGJUMP && er) return;
+  x = popaddress();
+  y = popaddress();
+  if (!USELONGJUMP && er) return;
+  dwrite(y, x);
+}
+
+/*
+   AWRITE - analog write
+*/
+void xawrite() {
+  address_t x, y;
+
+  nexttoken();
+  parsenarguments(2);
+  if (!USELONGJUMP && er) return;
+  x = popaddress();
+  if (x > 255) error(EORANGE);
+  y = popaddress();
+  if (!USELONGJUMP && er) return;
+  awrite(y, x);
+}
+
+/*
+   PINM - pin mode
+*/
+void xpinm() {
+  address_t x, y;
+
+  nexttoken();
+  parsenarguments(2);
+  if (!USELONGJUMP && er) return;
+  x = popaddress();
+  if (x > 1) error(EORANGE);
+  y = popaddress();
+  if (!USELONGJUMP && er) return;
+  pinm(y, x);
+}
+
+/*
+   DELAY in milliseconds
+
+   this must call bdelay() and not delay() as bdelay()
+   handles all the yielding and timing functions
+
+*/
+void xdelay() {
+  nexttoken();
+  parsenarguments(1);
+  if (!USELONGJUMP && er) return;
+  bdelay(pop());
+}
+
+/* tone if the platform has it -> BASIC command PLAY */
+#ifdef HASTONE
+/* play a tone */
+void xtone() {
+  address_t d = 0;
+  address_t v = 100;
+  address_t f, p;
+
+  /* get minimum of 2 and maximum of 4 args */
+  nexttoken();
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+  if (args > 4 || args < 2) {
+    error(EARGS);
+    return;
+  }
+
+  /* a switch would be more elegant but needs more progspace ;-) */
+  if (args == 4) v = popaddress();
+  if (args >= 3) d = popaddress();
+  f = popaddress();
+  p = popaddress();
+  if (!USELONGJUMP && er) return;
+
+  playtone(p, f, d, v);
+}
+#endif
+
+/* pulse output - pin, duration, [value], [repetitions, delay] */
+#ifdef HASPULSE
+void xpulse() {
+  address_t pin, duration;
+  address_t val = 1;
+  address_t interval = 0;
+  address_t repetition = 1;
+
+  /* do we have at least 2 and not more than 5 arguments */
+  nexttoken();
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+  if (args > 5 || args < 2) {
+    error(EARGS);
+    return;
+  }
+
+  /* get the data from stack */
+  if (args == 5) {
+    interval = popaddress();
+    repetition = popaddress();
+  }
+  if (args == 4) {
+    error(EARGS);
+    return;
+  }
+  if (args > 2) val = popaddress();
+  duration = popaddress();
+  pin = popaddress();
+  if (!USELONGJUMP && er) return;
+
+  /* low level run time function for the pulse */
+  pulseout(bpulseunit, pin, duration, val, repetition, interval);
+}
+
+/* read a pulse, units given by bpulseunit - default 10 microseconds */
+void bpulsein() {
+  address_t x, y;
+  unsigned long t, pt;
+
+  t = ((unsigned long) popaddress()) * 1000;
+  y = popaddress();
+  x = popaddress();
+  if (!USELONGJUMP && er) return;
+
+  push(pulsein(x, y, t) / bpulseunit);
+}
+#endif
+
+
+#ifdef HASGRAPH
+/*
+ 	COLOR setting, accepting one or 3 arguments
+*/
+void xcolor() {
+  int r, g, b;
+  nexttoken();
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+  switch (args) {
+    case 1:
+      vgacolor(pop());
+      break;
+    case 3:
+      b = pop();
+      g = pop();
+      r = pop();
+      rgbcolor(r, g, b);
+      break;
+    default:
+      error(EARGS);
+      break;
+  }
+}
+
+/*
+   PLOT a pixel on the screen
+*/
+void xplot() {
+  int x0, y0;
+
+  nexttoken();
+  parsenarguments(2);
+  if (!USELONGJUMP && er) return;
+  y0 = pop();
+  x0 = pop();
+  plot(x0, y0);
+}
+
+/*
+   LINE draws a line
+*/
+void xline() {
+  int x0, y0, x1, y1;
+
+  nexttoken();
+  parsenarguments(4);
+  if (!USELONGJUMP && er) return;
+  y1 = pop();
+  x1 = pop();
+  y0 = pop();
+  x0 = pop();
+  line(x0, y0, x1, y1);
+}
+
+void xrect() {
+  int x0, y0, x1, y1;
+
+  nexttoken();
+  parsenarguments(4);
+  if (!USELONGJUMP && er) return;
+  y1 = pop();
+  x1 = pop();
+  y0 = pop();
+  x0 = pop();
+  rect(x0, y0, x1, y1);
+}
+
+void xcircle() {
+  int x0, y0, r;
+
+  nexttoken();
+  parsenarguments(3);
+  if (!USELONGJUMP && er) return;
+  r = pop();
+  y0 = pop();
+  x0 = pop();
+  circle(x0, y0, r);
+}
+
+void xfrect() {
+  int x0, y0, x1, y1;
+
+  nexttoken();
+  parsenarguments(4);
+  if (!USELONGJUMP && er) return;
+  y1 = pop();
+  x1 = pop();
+  y0 = pop();
+  x0 = pop();
+  frect(x0, y0, x1, y1);
+}
+
+void xfcircle() {
+  int x0, y0, r;
+
+  nexttoken();
+  parsenarguments(3);
+  if (!USELONGJUMP && er) return;
+  r = pop();
+  y0 = pop();
+  x0 = pop();
+  fcircle(x0, y0, r);
+}
+#endif
+
+#ifdef HASDARKARTS
+/*
+   MALLOC allocates a chunk of memory
+*/
+void xmalloc() {
+  address_t s;
+  address_t a;
+  name_t name;
+
+  /* size and identifier */
+  s = popaddress();
+  a = popaddress();
+  if (!USELONGJUMP && er) return;
+
+  /* create a name */
+  name.token = TBUFFER;
+  name.l = 2;
+  name.c[0] = a % 256;
+  name.c[1] = a / 256;
+
+  /* allocate the memory */
+  push(bmalloc(&name, s));
+}
+
+/*
+   FIND an object on the heap
+   xfind can find things in the variable name space and the buffer space
+*/
+
+void xfind() {
+  address_t a;
+  address_t n;
+
+  /* is there a ( */
+  if (!expect('(', EUNKNOWN)) return;
+
+  /* after that, try to find the object on the heap */
+  nexttoken();
+  if (token == TFN) {
+    nexttoken();
+    name.token = TFN;
+  }
+  a = bfind(&name);
+
+  /* depending on the object, interpret the result */
+  switch (token) {
+    case ARRAYVAR:
+    case TFN:
+      if (!expect('(', EUNKNOWN)) return;
+      if (!expect(')', EUNKNOWN)) return;
+    case VARIABLE:
+    case STRINGVAR:
+      nexttoken();
+      break;
+    default:
+      expression(); /* do not use expectexpr here because of the token sequence */
+      if (!USELONGJUMP && er) return;
+      n = popaddress();
+      if (!USELONGJUMP && er) return;
+      name.token = TBUFFER;
+      name.l = 2;
+      name.c[0] = n % 256;
+      name.c[1] = n / 256;
+      a = bfind(&name);
+  }
+
+  /* closing braket, dont use expect here because of the token sequence */
+  if (token != ')') {
+    error(EUNKNOWN);
+    return;
+  }
+
+  push(a);
+}
+
+/*
+ 	EVAL can modify a program, there are serious side effects
+ 	which are not caught (and cannot be). All FOR loops and RETURN
+ 	vectors break if EVAL inserts in their range
+*/
+void xeval() {
+  address_t i, l;
+  address_t mline, line;
+  string_t s;
+
+  /* get the line number to store */
+  if (!expectexpr()) return;
+  line = popaddress();
+  if (!USELONGJUMP && er) return;
+
+  if (token != ',') {
+    error(EUNKNOWN);
+    return;
+  }
+
+  /* the line to be stored */
+  nexttoken();
+  if (!stringvalue(&s)) {
+    error(EARGS);
+    return;
+  }
+
+  /* here we have the string to evaluate it to the ibuffer
+  		only one line allowed, BUFSIZE is the limit */
+  l = s.length;
+  if (!USELONGJUMP && er) return;
+
+  if (l > BUFSIZE - 1) {
+    error(EORANGE);
+    return;
+  }
+
+#ifdef USEMEMINTERFACE
+  if (!s.ir) getstringtobuffer(&s, spistrbuf1, SPIRAMSBSIZE);
+#endif
+
+  for (i = 0; i < l; i++) ibuffer[i + 1] = s.ir[i];
+  ibuffer[l + 1] = 0;
+  if (DEBUG) {
+    outsc("** Preparing to store line ");
+    outnumber(line);
+    outspc();
+    outsc(ibuffer + 1);
+    outcr();
+  }
+
+  /* we find the line we are currently at */
+  if (st != SINT) {
+    mline = myline(here);
+    if (DEBUG) {
+      outsc("** myline is ");
+      outnumber(mline);
+      outcr();
+    }
+  }
+
+  /* go to interactive mode and try to store the line */
+  ax = line;							// the linennumber
+  push(st); st = SINT;	// go to (fake) interactive mode
+  bi = ibuffer;					// go to the beginning of the line
+  storeline();				// try to store it
+  st = pop();						// go back to run mode
+
+  /* find my line - side effects not checked here */
+  if (st != SINT) {
+    findline(mline);
+    nextline();
+  }
+}
+#endif
+
+
+#ifdef HASIOT
+
+/*
+   AVAIL of a stream - are there characters in the stream
+*/
+void xavail() {
+  mem_t oid = id;
+
+  id = popaddress();
+  if (!USELONGJUMP && er) return;
+  push(availch());
+  id = oid;
+}
+
+/*
+   IoT functions - sensor reader, experimentral
+*/
+void xfsensor() {
+  address_t s, a;
+
+  a = popaddress();
+  if (!USELONGJUMP && er) return;
+  s = popaddress();
+  if (!USELONGJUMP && er) return;
+  push(sensorread(s, a));
+}
+
+
+/*
+   Going to sleep for battery saving - implemented for ESP8266 and ESP32
+   in hardware-*.h
+*/
+
+void xsleep() {
+  nexttoken();
+  parsenarguments(1);
+  if (!USELONGJUMP && er) return;
+  activatesleep(pop());
+}
+
+/*
+   single byte wire access - keep it simple
+*/
+
+void xwire() {
+  int i;
+  
+  nexttoken();
+#if defined(HASWIRE) || defined(HASSIMPLEWIRE)
+/* a stop causes a release of the bus, can be used after multiple one byte writes
+   currently part of the cycle */
+/*
+  if (token == STOP) { 
+     wirestop(); 
+     return;
+  }
+*/
+
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+
+/* this code is the only place where the stack is accessed directly */
+  if (args > 1) {
+    wirestart((int)stack[sp-args].n, 0);
+    for(i=1; i<args; i++) wirewritebyte((int)stack[sp-args+i].n); 
+    wirestop();
+    sp-=args;
+  } else {
+    error(EARGS);
+    return;
+  }
+#endif
+}
+
+void xfwire() {
+#if defined(HASWIRE) || defined(HASSIMPLEWIRE)
+  int port;
+  ioer=0;
+  port=pop();
+  if (!USELONGJUMP && er) return;
+  wirestart(port, 1);
+  push(wirereadbyte());
+#endif
+}
+
+#endif
+
+/*
+   Error handling function.
+*/
+#ifdef HASERRORHANDLING
+void xerror() {
+  berrorh.type = 0;
+  erh = 0;
+  nexttoken();
+  switch (token) {
+    case TGOTO:
+      if (!expectexpr()) return;
+      berrorh.type = TGOTO;
+      berrorh.linenumber = pop();
+      break;
+    case TCONT:
+      berrorh.type = TCONT;
+    case TSTOP:
+      nexttoken();
+      break;
+    default:
+      error(EARGS);
+      return;
+  }
+}
+#endif
+
+/*
+   After and every trigger timing GOSUBS and GOTOS.
+*/
+#ifdef HASTIMER
+void resettimer(btimer_t* t) {
+  t->enabled = 0;
+  t->interval = 0;
+  t->last = 0;
+  t->type = 0;
+  t->linenumber = 0;
+}
+
+void xtimer() {
+  token_t t;
+  btimer_t* timer;
+
+  /* do we deal with every or after */
+  if (token == TEVERY) timer = &every_timer; else timer = &after_timer;
+
+  /* one argument expected, the time intervall */
+  if (!expectexpr()) return;
+
+  /* after that, a command GOTO or GOSUB with a line number
+  		more commands thinkable */
+  switch (token) {
+    case TGOSUB:
+    case TGOTO:
+      t = token;
+      if (!expectexpr()) return;
+      timer->last = millis();
+      timer->type = t;
+      timer->linenumber = pop();
+      timer->interval = pop();
+      timer->enabled = 1;
+      break;
+    default:
+      if (termsymbol()) {
+        x = pop();
+        if (x == 0)
+          timer->enabled = 0;
+        else {
+          if (timer->linenumber) {
+            timer->enabled = 1;
+            timer->interval = x;
+            timer->last = millis();
+          } else
+            error(EARGS);
+        }
+      } else
+        error(EUNKNOWN);
+      return;
+  }
+}
+#endif
+
+#ifdef HASEVENTS
+/*
+   The events API for Arduino with interrupt service routines
+   analogous to the timer API.
+
+   we use raw modes here
+
+   #define CHANGE 1
+   #define FALLING 2
+   #define RISING 3
+
+   detach und attach are wrappers around the original Arduino functions.
+   Runtime needs to be compiled with #define ARDUINOINTERRUPTS for this to
+   work.
+
+*/
+
+/* interrupts in BASIC fire once and then disable themselves, BASIC reenables them */
+void bintroutine0() {
+  eventlist[0].active = 1;
+  detachinterrupt(eventlist[0].pin);
+}
+void bintroutine1() {
+  eventlist[1].active = 1;
+  detachinterrupt(eventlist[1].pin);
+}
+void bintroutine2() {
+  eventlist[2].active = 1;
+  detachinterrupt(eventlist[2].pin);
+}
+void bintroutine3() {
+  eventlist[3].active = 1;
+  detachinterrupt(eventlist[3].pin);
+}
+
+mem_t eventindex(mem_t pin) {
+  mem_t i;
+
+  for (i = 0; i < EVENTLISTSIZE; i++ ) if (eventlist[i].pin == pin) return i;
+  return -1;
+}
+
+mem_t enableevent(mem_t pin) {
+  mem_t inter;
+  mem_t i;
+
+  /* do we have the data */
+  if ((i = eventindex(pin)) < 0) return 0;
+
+  /* can we use this pin? */
+  inter = pintointerrupt(eventlist[i].pin);
+  if (inter < 0) return 0;
+
+  /* attach the interrupt function to this pin */
+  switch (i) {
+    case 0:
+      attachinterrupt(inter, bintroutine0, eventlist[i].mode);
+      break;
+    case 1:
+      attachinterrupt(inter, bintroutine1, eventlist[i].mode);
+      break;
+    case 2:
+      attachinterrupt(inter, bintroutine2, eventlist[i].mode);
+      break;
+    case 3:
+      attachinterrupt(inter, bintroutine3, eventlist[i].mode);
+      break;
+    default:
+      return 0;
+  }
+
+  /* now set it enabled in BASIC */
+  eventlist[i].enabled = 1;
+  return 1;
+}
+
+
+void disableevent(mem_t pin) {
+  detachinterrupt(pin);
+}
+
+/* the event BASIC commands */
+void initevents() {
+  mem_t i;
+
+  for (i = 0; i < EVENTLISTSIZE; i++) eventlist[i].pin = -1;
+  nevents = 0;
+}
+
+void xevent() {
+  mem_t pin, mode;
+  mem_t type = 0;
+  address_t line = 0;
+
+  /* in this version two arguments are neded, one is the pin, the second the mode */
+  nexttoken();
+
+  /* debug code, display the event list */
+  if (termsymbol()) {
+    for (ax = 0; ax < EVENTLISTSIZE; ax++) {
+      if (eventlist[ax].pin >= 0) {
+        outnumber(eventlist[ax].pin); outspc();
+        outnumber(eventlist[ax].mode); outspc();
+        // outnumber(eventlist[ax].type); outspc();
+        if (eventlist[ax].type == TGOTO) outsc("GOTO"); else outsc("GOSUB");
+        outspc();
+        outnumber(eventlist[ax].linenumber); outspc();
+        outcr();
+      }
+    }
+    outnumber(nevents); outcr();
+    nexttoken();
+    return;
+  }
+
+  /* control of events */
+
+  /* stop and continue */
+  if (token == TSTOP) {
+    events_enabled = 0;
+    nexttoken();
+    return;
+  }
+
+  if (token == TCONT) {
+    events_enabled = 1;
+    nexttoken();
+    return;
+  }
+
+  /* clear the event list */
+  if (token == TCLR) {
+    initevents();
+    nexttoken();
+    return;
+  }
+
+  /* argument parsing */
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+
+  switch (args) {
+    case 2:
+      mode = pop();
+      if (mode > 3) {
+        error(EARGS);
+        return;
+      }
+    case 1:
+      pin = pop();
+      break;
+    default:
+      error(EARGS);
+  }
+
+  /* followed by termsymbol, GOTO or GOSUB */
+  if (token == TGOTO || token == TGOSUB) {
+    type = token;
+
+    /* which line to go to */
+    if (!expectexpr()) return;
+    line = pop();
+  } else {
+    if (!termsymbol()) {
+      error(EARGS);
+      return;
+    }
+  }
+
+  /* all done either set the interrupt up or delete it*/
+  if (type) {
+    if (!addevent(pin, mode, type, line)) {
+      error(EARGS);
+      return;
+    }
+  } else {
+    disableevent(pin);
+    deleteevent(pin);
+    return;
+  }
+
+  /* enable the interrupt */
+  if (!enableevent(pin)) {
+    deleteevent(pin);
+    error(EARGS);
+    return;
+  }
+}
+
+/* handling the event list */
+mem_t addevent(mem_t pin, mem_t mode, mem_t type, address_t linenumber) {
+  int i;
+
+  /* is the event already there */
+  for (i = 0; i < EVENTLISTSIZE; i++)
+    if (pin == eventlist[i].pin) goto slotfound;
+
+  /* if not, look for a free slot */
+  /* there is none, return with an error */
+  if (nevents >= EVENTLISTSIZE) return 0;
+
+  /* we have a free slot, increase number of events in list */
+  for (i = 0; i < EVENTLISTSIZE; i++)
+    if (eventlist[i].pin == -1) {
+      nevents++;
+      goto slotfound;
+    }
+
+  /* no free event slot */
+  return 0;
+
+  /* we have a slot */
+slotfound:
+  eventlist[i].enabled = 0;
+  eventlist[i].pin = pin;
+  eventlist[i].mode = mode;
+  eventlist[i].type = type;
+  eventlist[i].linenumber = linenumber;
+  eventlist[i].active = 0;
+  return 1;
+}
+
+void deleteevent(mem_t pin) {
+  int i;
+
+  /* do we have the event? */
+  i = eventindex(pin);
+
+  if (i >= 0) {
+    eventlist[i].enabled = 0;
+    eventlist[i].pin = -1;
+    eventlist[i].mode = 0;
+    eventlist[i].type = 0;
+    eventlist[i].linenumber = 0;
+    eventlist[i].active = 0;
+    nevents--;
+  }
+}
+#endif
+
+/*
+ 	BASIC DOS - disk access programs, to control mass storage from BASIC
+*/
+
+/* string match helper in catalog */
+char streq(const char *s, char *m) {
+  short i = 0;
+
+  while (m[i] != 0 && s[i] != 0 && i < SBUFSIZE) {
+    if (s[i] != m[i]) return 0;
+    i++;
+  }
+  return 1;
+}
+
+/*
+ 	CATALOG - basic directory function
+*/
+void xcatalog() {
+#if defined(FILESYSTEMDRIVER)
+  char filename[SBUFSIZE];
+  const char *name;
+
+  nexttoken();
+  getfilename(filename, 0);
+  if (!USELONGJUMP && er) return;
+
+  rootopen();
+  while (rootnextfile()) {
+    if (rootisfile()) {
+      name = rootfilename();
+      if (*name != '_' && *name != '.' && streq(name, filename)) {
+        outscf(name, 14); outspc();
+        if (rootfilesize() > 0) outnumber(rootfilesize());
+        outcr();
+        if (dspwaitonscroll() == 27) break;
+      }
+    }
+    rootfileclose();
+  }
+  rootclose();
+#else
+  nexttoken();
+#endif
+}
+
+/*
+ 	DELETE a file
+*/
+void xdelete() {
+#if defined(FILESYSTEMDRIVER)
+  char filename[SBUFSIZE];
+
+  nexttoken();
+  getfilename(filename, 0);
+  if (!USELONGJUMP && er) return;
+
+  removefile(filename);
+#else
+  nexttoken();
+#endif
+}
+
+/*
+ 	OPEN a file or I/O stream - very raw mix of different functions
+*/
+void xopen() {
+#if defined(FILESYSTEMDRIVER) || defined(HASRF24) || defined(HASMQTT) || defined(HASWIRE) || defined(HASSERIAL1)
+  char stream = IFILE; /* default is file operation */
+  char* filename;
+  int mode;
+
+  /* which stream do we open? default is FILE */
+  nexttoken();
+  if (token == '&') {
+    if (!expectexpr()) return;
+    stream = pop();
+    if (token != ',') {
+      error(EUNKNOWN);
+      return;
+    }
+    nexttoken();
+  }
+
+  /* the filename and its length */
+  // getfilename(filename, 0);
+  filename = getfilename2(0);
+  if (!USELONGJUMP && er) return;
+
+  /* and the arguments */
+  args = 0;
+  if (token == ',') {
+    nexttoken();
+    parsearguments();
+  }
+
+  /* getting an argument, no argument is read, i.e. mode 0 */
+  if (args == 0 ) {
+    mode = 0;
+  } else if (args == 1) {
+    mode = pop();
+  } else {
+    error(EARGS);
+    return;
+  }
+
+  /* open the stream */
+  switch (stream) {
+#ifdef HASSERIAL1
+    case ISERIAL1:
+      prtclose();
+      if (mode == 0) mode = 9600;
+      if (prtopen(filename, mode)) ert = 0; else ert = 1;
+      break;
+#endif
+#ifdef FILESYSTEMDRIVER
+    case IFILE:
+      switch (mode) {
+        case 1:
+          ofileclose();
+          if (ofileopen(filename, "w")) ert = 0; else ert = 1;
+          break;
+        case 2:
+          ofileclose();
+          if (ofileopen(filename, "a")) ert = 0; else ert = 1;
+          break;
+        default:
+        case 0:
+          ifileclose();
+          if (ifileopen(filename)) ert = 0; else ert = 1;
+          break;
+      }
+      break;
+#endif
+#ifdef HASRF24
+    case IRADIO:
+      if (mode == 0) {
+        iradioopen(filename);
+      } else if (mode == 1) {
+        oradioopen(filename);
+      }
+      break;
+#endif
+#if defined(HASWIRE)
+    case IWIRE:
+      wireopen(filename[0], mode);
+      break;
+#endif
+#ifdef HASMQTT
+    case IMQTT:
+      if (mode == 0) {
+        mqttsubscribe(filename);
+      } else if (mode == 1) {
+        mqttsettopic(filename);
+      }
+      break;
+#endif
+    default:
+      error(EORANGE);
+      return;
+  }
+#endif
+  nexttoken();
+}
+
+/*
+ 	OPEN as a function, currently only implemented for MQTT
+*/
+void xfopen() {
+  address_t stream = popaddress();
+  if (stream == 9) push(mqttstate()); else push(0);
+}
+
+/*
+ 	CLOSE a file or stream
+*/
+void xclose() {
+#if defined(FILESYSTEMDRIVER) || defined(HASRF24) || defined(HASMQTT) || defined(HASWIRE)
+  char stream = IFILE;
+  char mode;
+
+  nexttoken();
+  if (token == '&') {
+    if (!expectexpr()) return;
+    stream = pop();
+    if (token != ',' && ! termsymbol()) {
+      error(EUNKNOWN);
+      return;
+    }
+    nexttoken();
+  }
+
+  parsearguments();
+  if (args == 0) {
+    mode = 0;
+  } else if (args == 1) {
+    mode = pop();
+  } else {
+    error(EARGS);
+    return;
+  }
+
+  /* currently only close of files is implemented, should be also implemented for Wire */
+  switch (stream) {
+    case IFILE:
+      if (mode == 1 || mode == 2) ofileclose(); else if (mode == 0) ifileclose();
+      break;
+  }
+#endif
+  nexttoken();
+}
+
+/*
+   FDISK - format internal disk storages of RP2040, ESP and the like
+*/
+void xfdisk() {
+#if defined(FILESYSTEMDRIVER)
+  nexttoken();
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+  if (args > 1) error(EORANGE);
+  if (args == 0) push(0);
+  outsc("Format disk (y/N)?");
+  (void) consins(sbuffer, SBUFSIZE);
+  if (sbuffer[1] == 'y') formatdisk(pop());
+  if (fsstat(1) > 0) outsc("ok\n"); else outsc("fail\n");
+#endif
+  nexttoken();
+}
+
+#ifdef HASUSRCALL
+/*
+ 	USR low level function access of the interpreter
+ 	for each group of functions there is a call vector
+ 	and and argument.
+
+   USR arguments from 0 to 31 are reserved for the
+   interpreter status and the input output stream
+   mechanisms. All other values are free and can be used
+   for individual functions - see case 32 for an example.
+*/
+void xusr() {
+  address_t fn;
+  number_t v;
+  int arg;
+  address_t a;
+
+  v = pop();
+  arg = (int)v; /* a bit paranoid here */
+  fn = pop();
+  switch (fn) {
+    /* USR(0,y) delivers all the internal constants and variables or the interpreter */
+    case 0:
+      switch (arg) {
+        case 0:
+          push(bsystype);
+          break;
+        case 1: /* language set identifier, odd because USR is part of STEFANSEXT*/
+          a = 0;
+#ifdef HASAPPLE1
+          a |= 1;
+#endif
+#ifdef HASARDUINOIO
+          a |= 2;
+#endif
+#ifdef HASFILEIO
+          a |= 4;
+#endif
+#ifdef HASDARTMOUTH
+          a |= 8;
+#endif
+#ifdef HASGRAPH
+          a |= 16;
+#endif
+#ifdef HASDARKARTS
+          a |= 32;
+#endif
+#ifdef HASIOT
+          a |= 64;
+#endif
+          push(a); break;
+        case 2:
+          push(0); break; /* reserved for system speed identifier */
+
+#ifdef HASFLOAT
+        case 3:	push(-1); break;
+#else
+        case 3: push(0); break;
+#endif
+        case 4: push(numsize); break;
+        case 5: push(maxnum); break;
+        case 6: push(addrsize); break;
+        case 7: push(maxaddr); break;
+        case 8: push(strindexsize); break;
+        case 9: push(memsize + 1); break;
+        case 10: push(elength()); break;
+        case 11: push(GOSUBDEPTH); break;
+        case 12: push(FORDEPTH); break;
+        case 13: push(STACKSIZE); break;
+        case 14: push(BUFSIZE); break;
+        case 15: push(SBUFSIZE); break;
+        case 16: push(ARRAYSIZEDEF); break;
+        case 17: push(defaultstrdim); break;
+        // - 24 reserved, don't use
+        case 24: push(top); break;
+        case 25: push(here); break;
+        case 26: push(himem); break;
+        case 27: push(0); break;
+        case 28: push(freeRam()); break;
+        case 29: push(gosubsp); break;
+        case 30: push(loopsp); break;
+        case 31: push(0); break; // fnc removed as interpreter variable
+        case 32: push(sp); break;
+#ifdef HASDARTMOUTH
+        case 33: push(data); break;
+#else
+        case 33: push(0); break;
+#endif
+        case 34: push(0); break;
+#ifdef FASTTICKERPROFILE
+        case 35: 
+          push(avgfastticker()); 
+          clearfasttickerprofile();
+          break;
+#endif
+        /* - 48 reserved, don't use */
+        case 48: push(id); break;
+        case 49: push(idd); break;
+        case 50: push(od); break;
+        case 51: push(odd); break;
+        default: push(0);
+      } 
+      break;
+    /* access to properties of stream 1 - serial	*/
+    case 1:
+      push(serialstat(arg));
+      break;
+    /* access to properties of stream 2 - display and keyboard */
+    case 2:
+#if defined(DISPLAYDRIVER) || defined(GRAPHDISPLAYDRIVER)
+      push(dspstat(arg));
+#elif defined(ARDUINOVGA)
+      push(vgastat(arg));
+#else
+      push(0);
+#endif
+      break;
+      /* access to properties of stream 4 - printer */
+#ifdef HASSERIAL1
+    case 4:
+      push(prtstat(arg));
+      break;
+#endif
+      /* access to properties of stream 7 - wire */
+#if defined(HASWIRE)
+    case 7:
+      push(wirestat(arg));
+      break;
+#endif
+      /* access to properties of stream 8 - radio */
+#ifdef HASRF24
+    case 8:
+      push(radiostat(arg));
+      break;
+#endif
+      /* access to properties of stream 9 - mqtt */
+#ifdef HASMQTT
+    case 9:
+      push(mqttstat(arg));
+      break;
+#endif
+      /* access to properties of stream 16 - file */
+#ifdef FILESYSTEMDRIVER
+    case 16:
+      push(fsstat(arg));
+      break;
+#endif
+    case 32:
+    /* user function 32 and beyond can be used freely */
+    /* all USR values not assigned return 0 */
+    default:
+      if (fn > 31) push(usrfunction(fn, v)); else push(0);
+  }
+}
+
+/*
+   CALL currently only to exit the interpreter
+*/
+void xcall() {
+  int r;
+
+  if (!expectexpr()) return;
+  r = pop();
+  switch (r) {
+    case 0:
+      /* flush the EEPROM dummy and the output file and then exit */
+      eflush();
+      ofileclose();
+#if defined(POSIXFRAMEBUFFER)
+      vgaend();  /* clean up if you have played with the framebuffer */
+#endif
+      restartsystem();
+      break;
+    /* restart the filesystem - only test code */
+    case 1:
+      fsbegin();
+      break;
+    /* show the banner again */
+    case 2:
+      displaybanner();
+      break;
+    /* hard network start */
+    case 3: 
+#ifdef ARDUINOMQTT
+      netbegin();  
+      mqttbegin();
+#endif
+      break;
+    /* call values to 31 reserved! */
+    default:
+      /* your custom code into usrcall() */
+      if (r > 31) usrcall(r); else {
+        error(EORANGE);
+        return;
+      }
+      nexttoken();
+      return;
+  }
+}
+#endif
+
+
+/* the dartmouth stuff */
+#ifdef HASDARTMOUTH
+/*
+   DATA is simply skipped when encountered as a command
+*/
+void xdata() {
+  while (!termsymbol()) nexttoken();
+}
+
+/*
+   for READ find the next data record, helper of READ
+*/
+void nextdatarecord() {
+  address_t h;
+  mem_t s = 1;
+
+  /* save the location of the interpreter and the token we are processing */
+  h = here;
+
+  /* data at zero means we need to init it, by searching the first data record */
+  if (data == 0) {
+    here = 0;
+    while (here < top && token != TDATA) gettoken();
+    data = here;
+    datarc = 1;
+  }
+
+processdata:
+  /*
+     data at top means we have exhausted all data,
+     nothing more to be done here, however we simulate
+     a number value of 0 here and don't throw an error
+     this is not Dartmouth style, more consistent with
+     iterables
+  */
+  if (data == top) {
+    token = NUMBER;
+    x = 0;
+    ert = 1;
+    here = h;
+    return;
+  }
+
+  /* we process the data record by setting the here pointer to data and search with gettoken */
+  here = data;
+  gettoken();
+  if (token == '-') {
+    s = -1;
+    gettoken();
+  }
+  if (token == NUMBER || token == STRING) goto enddatarecord;
+  if (token == ',') {
+    gettoken();
+    if (token == '-') {
+      s = -1;
+      gettoken();
+    }
+    if (token != NUMBER && token != STRING) {
+      error(EUNKNOWN);
+      here = h;
+      return;
+    }
+    goto enddatarecord;
+  }
+
+  if (termsymbol()) {
+    while (here < top && token != TDATA) gettoken();
+    data = here;
+    goto processdata;
+  }
+
+  if (DEBUG) {
+    outsc("** error in nextdata after termsymbol ");
+    outnumber(data);
+    outcr();
+  }
+  error(EUNKNOWN);
+
+enddatarecord:
+  if (token == NUMBER && s == -1) {
+    x = -x;  /* this is needed because we tokenize only positive numbers */
+    s = 1;
+  }
+  data = here;
+  datarc++;
+  here = h;
+
+  if (DEBUG) {
+    outsc("** leaving nextdata with data and here ");
+    outnumber(data); outspc();
+    outnumber(here); outcr();
+  }
+}
+
+/*
+ 	READ - find data records and insert them to variables
+*/
+void xread() {
+  token_t t0;	/* remember the left hand side token until the end of the statement, type of the lhs */
+
+  lhsobject_t lhs;
+
+  mem_t datat;	/* the type of the data element */
+  address_t lendest, lensource, newlength;
+  int k;
+  string_t s;
+
+
+nextdata:
+  /* look for the variable */
+  nexttoken();
+
+  /* this code evaluates the left hand side - remember type and name */
+  copyname(&lhs.name, &name);
+
+  lefthandside(&lhs);
+  if (!USELONGJUMP && er) return;
+
+
+  if (DEBUG) {
+    outsc("** read lefthandside ");
+    outname(&lhs.name);
+    outsc(" at here ");
+    outnumber(here);
+    outsc(" and data pointer ");
+    outnumber(data);
+    outcr();
+  }
+
+
+  /* if the token after lhs is not a termsymbol or a comma, something is wrong */
+  if (!termsymbol() && token != ',') {
+    error(EUNKNOWN);
+    return;
+  }
+
+  /* remember the token we have draw from the stream */
+  t0 = token;
+
+  /* find the data and assign */
+  nextdatarecord();
+  if (!USELONGJUMP && er) return;
+
+  /* assign the value to the lhs - somewhat redundant code to assignment */
+  switch (token) {
+    case NUMBER:
+      /* a number is stored on the stack */
+      assignnumber2(&lhs, x);
+      break;
+    case STRING:
+      if (lhs.name.token != STRINGVAR) {
+        /* we read a string into a numerical variable */
+        if (sr.address) assignnumber2(&lhs, memread2(sr.address));
+        else assignnumber2(&lhs, *sr.ir);
+      } else {
+        /* we have all we need in sr */
+        /* the destination address of the lefthandside, on the fly create included */
+        getstring(&s, &lhs.name, lhs.i, lhs.j);
+        if (!USELONGJUMP && er) return;
+
+        /* the length of the lefthandside string */
+        lendest = s.length;
+
+        if (DEBUG) {
+          outsc("* read stringcode "); outname(&lhs.name); outcr();
+          outsc("** read source string length "); outnumber(sr.length); outcr();
+          outsc("** read dest string length "); outnumber(s.length); outcr();
+          outsc("** read dest string dimension "); outnumber(s.strdim); outcr();
+        }
+
+        /* does the source string fit into the destination */
+        if ((lhs.i + sr.length - 1) > s.strdim) {
+          error(EORANGE);
+          return;
+        }
+
+        /* now write the string */
+        assignstring(&s, &sr, sr.length);
+
+        /* classical Apple 1 behaviour is string truncation in substring logic */
+        newlength = lhs.i + sr.length - 1;
+        setstringlength(&lhs.name, newlength, lhs.j);
+
+      }
+      break;
+    default:
+      error(EUNKNOWN);
+      return;
+  }
+
+  /* next list item */
+  if (t0 == ',') goto nextdata;
+
+  /* no nexttoken here as we have already a termsymbol */
+  if (DEBUG) {
+    outsc("** leaving xread with "); outnumber(token); outcr();
+    outsc("** at here "); outnumber(here); outcr();
+    outsc("** and data pointer "); outnumber(data); outcr();
+  }
+
+  /* restore the token for further processing */
+  token = t0;
+}
+
+/*
+ 	RESTORE sets the data pointer to zero right now
+*/
+void xrestore() {
+  short rec;
+
+  nexttoken();
+
+  /* a plain restore */
+  if (termsymbol()) {
+    data = 0;
+    datarc = 1;
+    return;
+  }
+
+  /* something with an argument */
+  expression();
+  if (!USELONGJUMP && er) return;
+
+  /* we search a record */
+  rec = pop();
+
+  /* if we need to search backward, back to the beginning */
+  if (rec < datarc) {
+    data = 0;
+    datarc = 1;
+  }
+
+  /* advance to the record or top */
+  while (datarc < rec && data < top) nextdatarecord();
+
+  /* token is poisoned after nextdatarecord, need to cure this here */
+  nexttoken();
+}
+
+/*
+   DEF a function, functions are tokenized as FN ARRAYVAR to make
+   name processing easy.
+*/
+void xdef() {
+  address_t a;
+
+  name_t function; /* the name of the function */
+  name_t variable; /* the name of the argument */
+
+  /*  do we define a function */
+  if (!expect(TFN, EUNKNOWN)) return;
+
+  /* the name of the function, it is tokenized as an array */
+  if (!expect(ARRAYVAR, EUNKNOWN)) return;
+
+  copyname(&function, &name);
+  function.token = TFN; /* set the right type here */
+
+  /* the argument variable */
+  if (!expect('(', EUNKNOWN)) return;
+  nexttoken();
+  if (token == ')') {
+    zeroname(&variable);
+  } else if (token == VARIABLE) {
+    copyname(&variable, &name);
+    nexttoken();
+  } else {
+    error(EUNKNOWN);
+    return;
+  }
+  if (token != ')') {
+    error(EUNKNOWN);
+    return;
+  }
+
+  /* which type of function do we store is found in token */
+  nexttoken();
+
+  /* ready to store the function */
+  if (DEBUG) {
+    outsc("** DEF FN with function ");
+    outname(&function);
+    outsc(" and argument ");
+    outname(&variable);
+    outsc(" at here ");
+    outnumber(here);
+    outsc(" and token is ");
+    outnumber(token);
+    outcr();
+  }
+
+  /* find the function, we allow redefinition, currently only functions with 1 argument */
+  if ((a = bfind(&function)) == 0) a = bmalloc(&function, 1);
+  if (DEBUG) {
+    outsc("** found function structure at ");
+    outnumber(a);
+    outcr();
+  }
+  if (!USELONGJUMP && er) return;
+
+  /* no more memory */
+  if (a == 0) {
+    error(EVARIABLE);
+    return;
+  }
+
+  /* store the payload */
+
+  /* first the jump address */
+  setaddress(a, memwrite2, here);
+  a = a + addrsize;
+
+  /* the type of the return value - at the moment only numbers */
+  if (token == '=')
+    memwrite2(a++, VARIABLE);
+  else
+    memwrite2(a++, 0);
+
+  /* store the number of variables */
+  memwrite2(a++, 1);
+
+  /* store the type and the entire name of the variables */
+  memwrite2(a++, variable.token);
+  setname_pgm(a, &variable);
+  a = a + sizeof(name_t) - 1; /* reserves space for redefinition of functions with different variable */
+
+  /* skip the function body during defintion */
+  if (token == '=') {
+    while (!termsymbol()) nexttoken();
+  } else {
+#if defined(HASMULTILINEFUNCTIONS)
+    while (token != TFEND) {
+      nexttoken();
+      if (token == TDEF || token == EOL) {
+        error(EFUN);
+        return;
+      }
+    }
+    nexttoken();
+#else
+    error(EFUN);
+    return;
+#endif
+  }
+}
+
+/*
+   FN function evaluation, this is a call from factor or directly from
+   statement, the variable m tells xfn which one it is. 0 is from
+   factor and 1 is from statement.
+
+   This mechanism is only needed in multiline functions. In this case,
+   a new interpreter instance is started with statement(). The variable
+   m decides whether the stack should contain a return value (call from factor)
+   or should be empty.
+
+   The new function code has local variable capability of the new heap.
+*/
+void xfn(mem_t m) {
+  address_t a;
+  address_t h1, h2;
+  name_t variable;
+  token_t type;
+
+  /* the name of the function and its address */
+  if (!expect(ARRAYVAR, EUNKNOWN)) return;
+  name.token = TFN;
+  a = bfind(&name);
+  if (a == 0) {
+    error(EUNKNOWN);
+    return;
+  }
+
+  if (DEBUG) {
+    outsc("** in xfn found function ");
+    outname(&name);
+    outsc(" at ");
+    outnumber(a);
+    outcr();
+  }
+
+  /* and the argument */
+  if (!expect('(', EUNKNOWN)) return;
+  nexttoken();
+
+  /* if there is no argument, set it to zero */
+  if (token == ')') {
+    push(0);
+  } else {
+    expression();
+    if (!USELONGJUMP && er) return;
+  }
+  if (token != ')') {
+    error(EUNKNOWN);
+    return;
+  }
+
+  /* where is the function code */
+  h1 = getaddress(a, memread2);
+  a = a + addrsize;
+
+  if (DEBUG) {
+    outsc("** found function address ");
+    outnumber(h1);
+    outcr();
+  }
+
+  /* which type of function do we have*/
+  type = memread2(a++);
+
+  if (DEBUG) {
+    outsc("** found function type ");
+    outnumber(type);
+    outcr();
+  }
+
+  /* the number of variables is always one here */
+  a++;
+
+  /* what is the name of the variable, direct read as getname also gets a token */
+  /* skip the type here as not needed*/
+  // zeroname(&variable); /* fixes the obscure function namehandling bug not needed any more with copyname in place */
+  variable.token = memread2(a++);
+  (void) getname(a, &variable, memread2);
+  a = a + sizeof(name_t) - 1;
+
+  if (DEBUG) {
+    outsc("** found function variable ");
+    outname(&variable);
+    outcr();
+  }
+
+  /* create a local variable and store the value in it if there is a variable */
+  if (variable.c[0]) {
+    if (!bmalloc(&variable, 0)) {
+      error(EVARIABLE);
+      return;
+    }
+    setvar(&variable, pop());
+  } else {
+    /* create a dummy variable to make sure local variables are cleaned up */
+    variable.token = VARIABLE;
+    variable.c[0] = '_';
+    variable.c[1] = 0;
+    variable.l = 1;
+    if (!bmalloc(&variable, 0)) {
+      error(EVARIABLE);
+      return;
+    }
+  }
+
+  /* store here and then evaluate the function */
+  h2 = here;
+  here = h1;
+
+  /* 
+   * For simple singleline function, we directly do expression evaluation.
+   * This is inexpensive as no new interpreter instance is started.
+   */
+  if (type == VARIABLE) {
+    if (DEBUG) {
+      outsc("** evaluating expression at ");
+      outnumber(here);
+      outcr();
+    }
+    if (!expectexpr()) return;
+  } else {
+#ifdef HASMULTILINEFUNCTIONS
+    /* 
+     * Here comes the tricky part, we start a new interpreter instance.
+     * For multiline functions we generate a new interpreter instance by 
+     * calling statement(). The variable m decides whether the stack should
+     * contain a return value (call from factor) or should be empty.
+     * fncontext counts and limits the depth of function calls. This is 
+     * important to avoid stack overflow. For this reason statement() 
+     * should not allocate a lot of memory on the C stack.
+     */
+
+    if (DEBUG) {
+      outsc("** starting a new interpreter instance ");
+      outcr();
+    }
+
+    nexttoken();
+    fncontext++;
+    if (fncontext > FNLIMIT) {
+      error(EFUN);
+      return;
+    }
+    statement();
+    if (!USELONGJUMP && er) return;
+    if (fncontext > 0) fncontext--; else error(EFUN);
+#else
+    error(EFUN);
+    return;
+#endif
+  }
+
+  /* now that all the function stuff is done, return to here and set the variable right */
+  here = h2;
+  (void) bfree(&variable);
+
+
+  /* now, depending on how this was called, make things right, we remove
+  	the return value from the stack and call nexttoken */
+  if (m == 1) {
+    pop();
+    nexttoken();
+  }
+}
+
+/*
+ 	ON is a bit like IF
+*/
+
+void xon() {
+  number_t cr, tmp;
+  int ci;
+  token_t t;
+  int line = 0;
+
+  /*  ON can do the ON ERROR and ON EVENT commands as well, in this BASIC
+  		ERROR and EVENT can also be used without the ON */
+
+  nexttoken();
+  switch (token) {
+#ifdef HASERRORHANDLING
+    case TERROR:
+      xerror();
+      return;
+#endif
+#ifdef HASEVENTS
+    case TEVENT:
+      xevent();
+      return;
+#endif
+    default:
+      expression();
+      if (!USELONGJUMP && er) return;
+  }
+
+  /* the result of the condition, can be any number even large */
+  cr = pop();
+  if (DEBUG) {
+    outsc("** in on condition found ");
+    outnumber(cr);
+    outcr();
+  }
+
+  /* is there a goto or gosub */
+  if (token != TGOSUB && token != TGOTO)  {
+    error(EUNKNOWN);
+    return;
+  }
+
+  /* remember if we do gosub or goto */
+  t = token;
+
+  /* how many arguments have we got here */
+  nexttoken();
+  parsearguments();
+  if (!USELONGJUMP && er) return;
+  if (args == 0) {
+    error(EARGS);
+    return;
+  }
+
+  /* do we have more arguments then the condition? */
+  if (cr > args && cr <= 0) ci = 0; else ci = (int)cr;
+
+  /* now find the line to jump to and clean the stack, reuse cr
+     we need to clean the stack here completely, therefore complete the loop
+     ERROR handling is needed for the trapping mechanism. No using popaddress()
+     here, because of the needed stack cleanup. Unclear is this precaution is
+     really needed.
+  */
+  while (args) {
+    tmp = pop();
+    if (args == ci) {
+      if (tmp < 0) er = ELINE;
+      line = tmp;
+    }
+    args--;
+  }
+  if (!USELONGJUMP && er) return;
+
+  if (DEBUG) {
+    outsc("** in on found line as target ");
+    outnumber(line);
+    outcr();
+  }
+
+  /* no line found to jump to */
+  if (line == 0) {
+    nexttoken();
+    return;
+  }
+
+  /* prepare for the jump	*/
+  if (t == TGOSUB) pushgosubstack(0);
+  if (!USELONGJUMP && er) return;
+
+  findline(line);
+  if (!USELONGJUMP && er) return;
+
+  /* goto in interactive mode switched to RUN mode
+  		no clearing of variables and stacks */
+  if (st == SINT) st = SRUN;
+
+}
+#endif
+
+/* the structured BASIC extensions, WHILE, UNTIL, and SWITCH */
+
+#ifdef HASSTRUCT
+void xwhile() {
+
+  /* what? */
+  if (DEBUG) {
+    outsc("** in while ");
+    outnumber(here);
+    outspc();
+    outnumber(token);
+    outcr();
+  }
+
+  /* interactively we need to save the buffer location */
+  if (st == SINT) here = bi - ibuffer;
+
+  /* save the current location and token type, here points to the condition, name is irrelevant */
+  pushloop(0, TWHILE, here, 0, 0);
+
+  /* is there a valid condition */
+  if (!expectexpr()) return;
+
+  /* if false, seek WEND and clear the stack*/
+  if (!pop()) {
+    droploop();
+    if (st == SINT) bi = ibuffer + here;
+    nexttoken();
+    findbraket(TWHILE, TWEND);
+    nexttoken();
+  }
+}
+
+void xwend() {
+  blocation_t l;
+  bloop_t* loop;
+
+  /* remember where we are */
+  pushlocation(&l);
+
+  /* back to the condition */
+  loop = activeloop();
+  if (!USELONGJUMP && er) return;
+
+  /* is this a while loop */
+  if (loop->var.token != TWHILE ) {
+    error(TWEND);
+    return;
+  }
+
+  /* interactive run or program run */
+  if (st == SINT) bi = ibuffer + loop->here; else here = loop->here;
+
+  /* is there a valid condition */
+  if (!expectexpr()) return;
+
+  /* if false, seek WEND */
+  if (!pop()) {
+    droploop();
+    poplocation(&l);
+    nexttoken();
+  }
+}
+
+void xrepeat() {
+  /* what? */
+  if (DEBUG) {
+    outsc("** in repeat ");
+    outnumber(here);
+    outspc();
+    outnumber(token);
+    outcr();
+  }
+
+  /* interactively we need to save the buffer location */
+  if (st == SINT) here = bi - ibuffer;
+
+  /* save the current location and token type, here points statement after repeat */
+  pushloop(0, TREPEAT, here, 0, 0);
+
+  /* we are done here */
+  nexttoken();
+}
+
+void xuntil() {
+  blocation_t l;
+  bloop_t* loop;
+
+  /* is there a valid condition */
+  if (!expectexpr()) return;
+
+  /* remember the location */
+  pushlocation(&l);
+
+  /* look on the stack */
+  loop = activeloop();
+  if (!USELONGJUMP && er) return;
+
+  /* if false, go back to the repeat */
+  if (!pop()) {
+
+    /* the right loop type ? */
+    if (loop->var.token != TREPEAT) {
+      error(TUNTIL);
+      return;
+    }
+
+    /* correct for interactive */
+    if (st == SINT) bi = ibuffer + loop->here; else here = loop->here;
+
+  } else {
+
+    /* back to where we were */
+    droploop();
+    poplocation(&l);
+  }
+
+  nexttoken(); /* a bit of evil here, hobling over termsymbols */
+}
+
+void xswitch() {
+  number_t r;
+  mem_t match = 0;
+  mem_t swcount = 0;
+  blocation_t l;
+
+  /* lets look at the condition */
+  if (!expectexpr()) return;
+  r = pop();
+
+  /* remember where we are */
+  pushlocation(&l);
+
+  /* seek the first case to match the condition */
+  while (token != EOL) {
+    if (token == TSWEND) break;
+    /* nested SWITCH - skip them all*/
+    if (token == TSWITCH) {
+
+      if (DEBUG) {
+        outsc("** in SWITCH - nesting found ");
+        outcr();
+      }
+
+      nexttoken();
+      findbraket(TSWITCH, TSWEND);
+
+      if (DEBUG) {
+        outsc("** in SWITCH SWEND found at ");
+        outnumber(here);
+        outcr();
+      }
+
+      if (!USELONGJUMP && er) return;
+    }
+    /* a true case */
+    if (token == TCASE) {
+
+      /* more sophisticated, case can have an argument list */
+      nexttoken();
+      parsearguments();
+
+      if (DEBUG) {
+        outsc("** in CASE found ");
+        outnumber(args);
+        outsc(" arguments");
+        outcr();
+      }
+
+      if (!USELONGJUMP && er) return;
+      if (args == 0) {
+        error(TCASE);
+        return;
+      }
+      while (args > 0) {
+        if (pop() == r) match = 1;
+        args--;
+      }
+
+      if (match) {
+        return;
+      }
+    }
+    nexttoken();
+  }
+
+  /* return to the original location and continue if no case is found */
+  poplocation(&l);
+}
+
+/* a nacked case statement always seeks the end of the switch,
+	currently SWITCH statements cannot be nested.  */
+void xcase() {
+  while (token != EOL) {
+    nexttoken();
+    if (token == TSWEND) break;
+  }
+}
+#endif
+
+
+/*
+ 	statement processes an entire basic statement until the end
+ 	of the line.
+
+ 	The statement loop is a bit odd and requires some explanation.
+ 	A statement function called in the central switch here must either
+ 	call nexttoken as its last action to feed the loop with a new token
+ 	and then break or it must return which means that the rest of the
+ 	line is ignored. A function that doesn't call nexttoken and just
+ 	breaks causes an infinite loop.
+
+ 	statement is called once in interactive mode and terminates
+ 	at end of a line.
+*/
+
+void statement() {
+  mem_t xc;
+
+  if (DEBUG) bdebug("statement \n");
+
+  /* we can long jump out out any function now, making error handling easier */
+  /* if we return here with a long jump, only the error handler is triggered */
+  /* this mechanism always branches to the highest context */
+#if USELONGJUMP == 1
+  if (fncontext == 0) if (setjmp(sthook)) goto errorhandler;
+#endif
+
+  /* the core loop processing commands */
+  while (token != EOL) {
+#ifdef HASSTEFANSEXT
+    /* debug level 1 happens only in the statement loop */
+    if (debuglevel == 1) {
+      debugtoken();
+      outcr();
+    }
+#endif
+    switch (token) {
+      case ':':
+      case LINENUMBER:
+        nexttoken();
+        break;
+      /* Palo Alto BASIC language set + BREAK */
+      case TPRINT:
+        xprint();
+        break;
+      case TLET:
+        nexttoken();
+        if ((token != ARRAYVAR) && (token != STRINGVAR) && (token != VARIABLE)) {
+          error(EUNKNOWN);
+          break;
+        }
+      case STRINGVAR:
+      case ARRAYVAR:
+      case VARIABLE:
+        assignment();
+        break;
+      case TINPUT:
+        xinput();
+        break;
+      case TRETURN:
+#ifndef HASMULTILINEFUNCTIONS
+        xreturn();
+#else
+        if (fncontext > 0) {
+          nexttoken();
+          if (termsymbol()) {
+            push(0);
+          }
+          else expression();
+          return; /* this returns from statement and ends one interpreter instance */
+        } else
+          xreturn(); /* while this happens inside the instance */
+#endif
+        break;
+#ifndef HASMULTILINEFUNCTIONS
+      case TGOSUB:
+      case TGOTO:
+        xgoto();
+        break;
+#else
+      case TGOSUB:
+        if (fncontext > 0) {
+          error(EFUN);
+          return;
+        }
+      case TGOTO:
+        xgoto();
+        break;
+#endif
+      case TIF:
+        xif();
+        break;
+      case TFOR:
+        xfor();
+        break;
+      case TNEXT:
+        xnext();
+        break;
+      case TBREAK:
+        xbreak();
+        break;
+      case TSTOP:
+      case TEND:		/* return here because new input is needed, end as a block end is handles elsewhere */
+        *ibuffer = 0;	/* clear ibuffer - this is a hack */
+        st = SINT;		/* switch to interactive mode */
+        eflush(); 	/* if there is an EEPROM dummy, flush it here (protects flash storage!) */
+        ofileclose();
+        nexttoken();
+        if (token == TSTOP) {
+          restartsystem();
+        }
+        *ibuffer = 0;	/* clear ibuffer - this is a hack */
+        st = SINT;	/* switch to interactive mode */
+        return; 	/* leave the interpreter instance */
+      case TLIST:
+        xlist();
+        break;
+      case TNEW: 		/* return here because new input is needed */
+        xnew();
+        return;
+      case TCONT:		/* cont behaves differently in interactive and in run mode */
+        if (st == SRUN || st == SERUN) {
+          xcont();
+          break;
+        }		/* no break here, because interactively CONT=RUN minus CLR */
+      case TRUN:
+        xrun();
+        return;
+      case TREM:
+        xrem();
+        break;
+        /* Apple 1 language set */
+#ifdef HASAPPLE1
+      case TDIM:
+        xdim();
+        break;
+      case TCLR:
+        xclr();
+        break;
+      case TTAB:
+      case TSPC:
+        xtab();
+        break;
+      case TPOKE:
+        xpoke();
+        break;
+#endif
+      /* Stefan's tinybasic additions */
+      case TSAVE:
+        xsave();
+        break;
+      case TLOAD:
+        xload(0);
+        if (st == SINT) return; /* interactive load doesn't like break as the ibuffer is messed up; */
+        else break;
+#ifdef HASSTEFANSEXT
+      case TDUMP:
+        xdump();
+        break;
+      case TGET:
+        xget();
+        break;
+      case TPUT:
+        xput();
+        break;
+      case TSET:
+        xset();
+        break;
+      case TNETSTAT:
+        xnetstat();
+        break;
+      case TCLS:
+        ax = od;
+        /* if we have a display it is the default for CLS */
+#if defined(DISPLAYDRIVER) || defined(GRAPHDISPLAYDRIVER)
+        od = ODSP;
+#endif
+        outch(12);
+        od = ax;
+        nexttoken();
+        break;
+      case TLOCATE:
+        xlocate();
+        break;
+#endif
+#ifdef HASUSRCALL
+      /* low level functions */
+      case TCALL:
+        xcall();
+        break;
+#endif
+        /* Arduino IO */
+#ifdef HASARDUINOIO
+      case TDWRITE:
+        xdwrite();
+        break;
+      case TAWRITE:
+        xawrite();
+        break;
+      case TPINM:
+        xpinm();
+        break;
+      case TDELAY:
+        xdelay();
+        break;
+#ifdef HASTONE
+      case TTONE:
+        xtone();
+        break;
+#endif
+#ifdef HASPULSE
+      case TPULSE:
+        xpulse();
+        break;
+#endif
+#endif
+        /* BASIC DOS function */
+#ifdef HASFILEIO
+      case TCATALOG:
+        xcatalog();
+        break;
+      case TDELETE:
+        xdelete();
+        break;
+      case TOPEN:
+        xopen();
+        break;
+      case TCLOSE:
+        xclose();
+        break;
+      case TFDISK:
+        xfdisk();
+        break;
+#endif
+        /* graphics */
+#ifdef HASGRAPH
+      case TCOLOR:
+        xcolor();
+        break;
+      case TPLOT:
+        xplot();
+        break;
+      case TLINE:
+        xline();
+        break;
+      case TRECT:
+        xrect();
+        break;
+      case TCIRCLE:
+        xcircle();
+        break;
+      case TFRECT:
+        xfrect();
+        break;
+      case TFCIRCLE:
+        xfcircle();
+        break;
+#endif
+#ifdef HASDARTMOUTH
+      case TDATA:
+        xdata();
+        break;
+      case TREAD:
+        xread();
+        break;
+      case TRESTORE:
+        xrestore();
+        break;
+      case TDEF:
+        xdef();
+        break;
+      case TON:
+        xon();
+        break;
+#ifdef HASMULTILINEFUNCTIONS
+      case TFN:
+        xfn(1);
+        break;
+      case TFEND:
+        /* we leave the statement loop and return to the calling expression() */
+        /* if the function is ended with FEND we return 0 */
+        if (fncontext == 0) {
+          error(EFUN);
+          return;
+        }
+        else {
+          push(0);
+          return;
+        }
+        break;
+#endif
+#endif
+#ifdef HASSTEFANSEXT
+      case TELSE:
+        xelse();
+        break;
+#endif
+#ifdef HASDARKARTS
+      case TEVAL:
+        xeval();
+        break;
+#endif
+#ifdef HASERRORHANDLING
+      case TERROR:
+        xerror();
+        break;
+#endif
+#ifdef HASIOT
+      case TSLEEP:
+        xsleep();
+        break;
+      case TWIRE:
+        xwire();
+        break;
+#endif
+#ifdef HASTIMER
+      case TAFTER:
+      case TEVERY:
+        xtimer();
+        break;
+#endif
+#ifdef HASEVENTS
+      case TEVENT:
+        xevent();
+        break;
+#endif
+#ifdef HASSTRUCT
+      case TWHILE:
+        xwhile();
+        break;
+      case TWEND:
+        xwend();
+        break;
+      case TREPEAT:
+        xrepeat();
+        break;
+      case TUNTIL:
+        xuntil();
+        break;
+      case TSWITCH:
+        xswitch();
+        break;
+      case TCASE:
+        xcase();
+        break;
+      case TSWEND:
+      case TDO:
+      case TDEND:
+        nexttoken();
+        break;
+#endif
+#ifdef HASEDITOR
+      case TEDIT:
+        xedit();
+        break;
+#endif
+#ifdef HASHELP
+      case THELP:
+        xhelp();
+        break;
+#endif
+#ifdef HASCAMERA
+      case TCAM:
+        xcam();
+        break;
+#endif
+      default:
+        /*  strict syntax checking */
+        error(EUNKNOWN);
+        goto errorhandler;
+    }
+
+
+    /*
+       after each statement we check on a break character
+       on an Arduino entering "#" at runtime stops the program
+       for BREAKINBACKGROUND we do this in the background loop
+       to avoid slowing down.
+    */
+#if defined(BREAKCHAR)
+#ifndef BREAKINBACKGROUND
+    if (checkch() == BREAKCHAR) {
+      st = SINT;
+      if (od == 1) serialflush(); else xc = inch();
+      return;
+    }
+#else
+    if (breakcondition) {
+      breakcondition = 0;
+      st = SINT;
+      if (od == 1) serialflush(); else xc = inch();
+      return;
+    }
+#endif
+#endif
+
+    /* and after each statement, check the break pin */
+#if defined(BREAKPIN)
+    if (getbreakpin() == 0) {
+      st = SINT;
+      return;
+    };
+#endif
+
+    /* and then there is also signal handling on some platforms */
+#if defined(POSIXSIGNALS)
+    if (breaksignal) {
+      st = SINT;
+      breaksignal = 0;
+      serialflush();
+      outcr();
+      return;
+    }
+#endif
+
+    /* yield after each statement which is a 10-100 microsecond cycle
+    		on Arduinos and the like, all background tasks are handled in byield */
+    byield();
+
+    /* if error handling is compiled into the code, errors can be trapped here */
+errorhandler:
+#ifdef HASERRORHANDLING
+    if (er) {
+      if (st != SINT) {
+        erh = er;
+        er = 0;
+        switch (berrorh.type) {
+          case TCONT:
+            while (!termsymbol()) nexttoken();
+            break;
+          case TGOTO:
+            findline(berrorh.linenumber);
+            berrorh.type = 0;
+            berrorh.linenumber = 0;
+            if (er) return;
+            break;
+          case 0:
+            return;
+          default:
+            nexttoken();
+        }
+      } else
+        return;
+    }
+#else
+    /* when an error is encountered the statement loop is ended */
+    if (er) return;
+#endif
+
+    /*
+       if we run error free, interrupts and times can be processed
+
+       We can savely interrupt and return only if here points either to
+       a termsymbol : or LINENUMBER. NEXT is a special case. We need to
+       catch this here because empty FOR loops never even have a termsymbol
+       a ":"" is swallowed after FOR. This is probably also true for 
+       WHILE and REPEAT loops but has not been tested yet.
+
+       The interrupts are only triggered in fncontext 0, i.e. in the
+       main loop. While in functions, all interrupts are disabled.
+
+    */
+
+    if ((token == LINENUMBER || token == ':' || token == TNEXT) && (st == SERUN || st == SRUN)) {
+      
+/* timer functions are processed before events */
+#ifdef HASTIMER
+      /* after is always processed before every */
+      if (after_timer.enabled && fncontext == 0) {
+        if (millis() > after_timer.last + after_timer.interval) {
+          after_timer.enabled = 0;
+          if (after_timer.type == TGOSUB) {
+            if (token == TNEXT || token == ':') here--;
+            if (token == LINENUMBER) here -= (1 + sizeof(address_t));
+            pushgosubstack(0);
+          }
+          findline(after_timer.linenumber);
+          if (er) return;
+        }
+      }
+      /* periodic events */
+      if (every_timer.enabled && fncontext == 0) {
+        if (millis() > every_timer.last + every_timer.interval) {
+          every_timer.last = millis();
+          if (every_timer.type == TGOSUB) {
+            if (token == TNEXT || token == ':') here--;
+            if (token == LINENUMBER) here -= (1 + sizeof(address_t));
+            pushgosubstack(0);
+            if (er) return;
+          }
+          findline(every_timer.linenumber);
+          if (er) return;
+        }
+      }
+ #endif
+    /* the branch code for interrupts, we round robin through the event list */
+#ifdef HASEVENTS
+      /* interrupts */
+      if (nevents > 0 && events_enabled && fncontext == 0) {
+        for (xc = 0; xc < EVENTLISTSIZE; xc++) {
+          if (eventlist[ievent].pin && eventlist[ievent].enabled && eventlist[ievent].active) {
+            if (eventlist[ievent].type == TGOSUB) {
+              if (token == TNEXT || token == ':') here--;
+              if (token == LINENUMBER) here -= (1 + sizeof(address_t));
+              pushgosubstack(TEVENT);
+              if (er) return;
+            }
+            findline(eventlist[ievent].linenumber); /* here we jump to the new line */
+            if (er) return;
+            eventlist[ievent].active = 0;
+            enableevent(eventlist[ievent].pin); /* events are disabled in the interrupt function, here they are activated again */
+            events_enabled = 0; /* once we have jumped, we keep the events in BASIC off until reenabled by the program */
+            break;
+          }
+          ievent = (ievent + 1) % EVENTLISTSIZE;
+        }
+      }
+#endif
+    } 
+  }
+}
+
+/*
+   the banner message
+*/
+void displaybanner() {
+  int i;
+  printmessage(MGREET); outspc();
+  printmessage(EOUTOFMEMORY); outspc();
+  if (memsize < maxnum) outnumber(memsize + 1); else {
+    outnumber(memsize / 1024 + 1);
+    outch('k');
+  }
+  outspc();
+#ifdef HASERRORHANDLING
+  printmessage(EEEPROM);
+  outspc();
+#endif
+  outnumber(elength());
+  outcr();
+#ifdef HASHELP
+  outsc(getmessage(MLANGSET));
+  outsc(getmessage(MBASICLANGSET)); outcr();
+  outsc("IO: ");
+  for (i = 0; i < 32; i++) {
+    if (iostat(i)) {
+      outnumber(i); outspc();
+    }
+  }
+  outcr();
+#endif
+}
+
+/*
+ 	the setup routine - Arduino style
+*/
+void setup() {
+
+  /* start measureing time */
+//  timeinit();
+
+  /* initialize the event system */
+#ifdef HASEVENTS
+  initevents();
+#endif
+
+  /* init all io functions */
+//  ioinit();
+  idd = ISERIAL;
+  odd = OSERIAL;
+
+#ifdef FILESYSTEMDRIVER
+  // if (fsstat(1) == 1 && fsstat(2) > 0) outsc("Filesystem started\n");
+#endif
+
+  /* setup for all non BASIC stuff */
+  bsetup();
+
+  /* get the BASIC memory, either as memory array with
+  	ballocmem() or as an SPI serical memory */
+#if (defined(SPIRAMINTERFACE) || defined(SPIRAMSIMULATOR)) && (!defined(MEMSIZE) || MEMSIZE == 0)
+  himem = memsize = spirambegin();
+#else
+#if defined(EEPROMMEMINTERFACE)
+  /*
+      for an EEPROMMEM system, the memory consists of the
+      EEPROM from 0 to elength()-eheadersize and then the RAM.
+  */
+  himem = memsize = ballocmem() + (elength() - eheadersize);
+#else
+  himem = memsize = ballocmem();
+#endif
+#endif
+
+#ifndef EEPROMMEMINTERFACE
+  if (DEBUG) {
+    outsc("** on startup, memsize is ");
+    outnumber(memsize);
+    outcr();
+  }
+
+  /* be ready for a new program if we run on RAM*/
+  xnew();
+
+  if (DEBUG) {
+    outsc("** on startup, ran xnew ");
+    outcr();
+  }
+#else
+  /* if we run on an EEPROM system, more work is needed */
+  if (eread(0) == 0 || eread(0) == 1) { /* have we stored a program and don't do new */
+    top = getaddress(1, beread);
+    resetbasicstate(); /* the little brother of new, reset the state but let the program memory be */
+    for (address_t a = elength(); a < memsize; a++) memwrite2(a, 0); /* clear the heap i.e. the basic RAM*/
+  } else {
+    eupdate(0, 0); /* now we have stored a program of length 0 */
+    setaddress(1, beupdate, 0);
+    xnew();
+  }
+#endif
+
+  /* check if there is something to autorun and prepare
+  		the interpreter to got into autorun once loop is reached */
+  if (!autorun()) displaybanner();
+
+  /* activate the BREAKPIN */
+  breakpinbegin();
+}
+
+/*
+ 	the loop routine for interactive input
+*/
+void loop() {
+
+  /*
+   	autorun state was found in setup, autorun now but only once
+   	autorun BASIC programs return to interactive after completion
+   	autorun code always must loop in itself
+  */
+  if (st == SERUN) {
+    xrun();
+    /* on an EEPROM system we don't set top to 0 here */
+#ifndef EEPROMMEMINTERFACE
+    top = 0;
+#endif
+    st = SINT;
+  } else if (st == SRUN) {
+    here = 0;
+    xrun();
+    st = SINT;
+  }
+
+  /* always return to default io channels once interactive mode is reached */
+  iodefaults();
+  form = 0;
+
+  /* the prompt and the input request */
+  printmessage(MPROMPT);
+  (void) ins(ibuffer, BUFSIZE - 2);
+
+  /* tokenize first token from the input buffer */
+  bi = ibuffer;
+  nexttoken();
+
+  /* a number triggers the line storage, anything else is executed */
+  if (token == NUMBER) {
+    ax = x;
+    storeline();
+
+    /* on an EEPROM system we store top after each succesful line insert */
+#ifdef EEPROMMEMINTERFACE
+    setaddress(1, beupdate, top);
+#endif
+  } else {
+    /* st=SINT; */
+    statement();
+    st = SINT;
+  }
+
+  /* here, at last, all errors need to be catched and back to interactive input*/
+  if (er) reseterror();
+
+}
+
+/* if we are not on an Arduino, we need a main */
+#if !defined(ARDUINO) && !defined(STM32)
+int main(int argc, char* argv[]) {
+
+  /* save the arguments if there are any */
+#ifdef HASARGS
+  bargc = argc;
+  bargv = argv;
+#endif
+
+  /* do what an Arduino would do, this loops for every interactive input */
+  setup();
+  while (1)
+    loop();
+}
+#endif
+
+/*
+   Arduino style function for non BASIC code to run on the MCU.
+   All code that needs to run on the MCU independently can be put here.
+   It works more or less just like the normal loop() and setup().
+
+   This is meant for robotics and other device control type of stuff
+  	on the Arduino platform.
+
+   On POSIX systems I/O is blocking and therefore bloop() is not called
+  	consistently.
+
+   Rules of the game:
+   - bsetup() is called once during interpreter startup after all
+      IO subsystems are started and before the BASIC main memory is
+      allocated. Allocate memory here. Do not allocate a lot of memory
+      in bloop().
+   - Never start or restart I/O functions of BASIC in bsetup(),
+      no Wire.begin(), Serial.begin() etc. If BASIC also uses this
+      BASIC handles the I/O startup. Things that BASIC does not use
+      can be started here.
+   - bloop() is called after every token, during I/O polling and in
+      DELAY functions.
+   - The typical call frequency of bloop() is 20 microseconds or faster.
+      This is fairly constant and reliable.
+   - The interpreter is robust against code in bloop() that needs a lot
+      of CPU time. It will simply slow down but it will not break,
+      unless(!) other I/O systems like network also need background CPU time
+      and you block bloop for a long time. As a rule of thumb, on network systems
+      bloop() should return after 1 ms. After bloop() has returned, the interpreter
+      tries to handle network and USB update stuff.
+   - Never use delay() in bloop(). Set a counter. Look at the tone
+      emulation code for examples.
+   - Never ever call BASIC functions from bloop(). BASIC function will
+      eventually call byield() which calls bloop() and so forth.
+      If you need to communicate data into BASIC, use the BASIC main
+      memory, variables or the USR function mechanism.
+   - Avoid allocating a lot of memory in bloop().
+*/
+
+void bsetup() {
+  /* put your setup code here, to run once: */
+
+}
+
+void bloop() {
+  /* put your main code here, to run repeatedly: */
+
+  if(tokenCounter--)
+    return;
+
+  vcsEndOverblank();
+
+  renderDisplayFrame();
+  tokenCounter = 10;
+
+
+  // we are in VBLANK after renderDisplay
+  // read controller and switch values from RIOT
+
+  // RIOT shadow
+  riotShadowRAM[0] = vcsRead4(SWCHA);
+  vcsNop2();
+  riotShadowRAM[2] = vcsRead4(SWCHB);
+  vcsNop2();
+  riotShadowRAM[4] = vcsRead4(INTIM);
+  vcsNop2();
+
+  // TIA shadow
+  tiaShadowRAM[INPT0] = vcsRead4(INPT0);
+  vcsNop2();
+  tiaShadowRAM[INPT1] = vcsRead4(INPT1);
+  vcsNop2();
+  tiaShadowRAM[INPT2] = vcsRead4(INPT2);
+  vcsNop2();
+  tiaShadowRAM[INPT3] = vcsRead4(INPT3);
+  vcsNop2();
+  tiaShadowRAM[INPT4] = vcsRead4(INPT4);
+  vcsNop2();
+  tiaShadowRAM[INPT5] = vcsRead4(INPT5);
+  vcsNop2();
+
+  vcsLda2(tiaShadowRAM[AUDC0]);
+  vcsSta3(AUDC0);
+  vcsLda2(tiaShadowRAM[AUDC1]);
+  vcsSta3(AUDC1);
+  vcsLda2(tiaShadowRAM[AUDF0]);
+  vcsSta3(AUDF0);
+  vcsLda2(tiaShadowRAM[AUDF1]);
+  vcsSta3(AUDF1);
+  vcsLda2(tiaShadowRAM[AUDV0]);
+  vcsSta3(AUDV0);
+  vcsLda2(tiaShadowRAM[AUDV1]);
+  vcsSta3(AUDV1);
+
+  vcsStartOverblank();
+  tiaShadowRAM[EVEN_FRAME] = tiaShadowRAM[EVEN_FRAME] ? 0:1;
+
+  if(riotShadowRAM[0] != 0b11111111 && !key_restrainer){ // Key pressed
+    active_char = (char)riotShadowRAM[0];
+    key_restrainer = true;
+  }else if(riotShadowRAM[0] == 0b11111111 ){
+    key_restrainer = false;
+  }
+}
