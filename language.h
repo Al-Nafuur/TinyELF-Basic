@@ -216,7 +216,7 @@
 #undef HASTONE
 #undef HASPULSE
 #define HASSTEFANSEXT
-#define HASERRORMSG
+#undef HASERRORMSG
 #undef HASFLOAT
 #undef HASGRAPH
 #undef HASDARTMOUTH

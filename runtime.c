@@ -121,6 +121,11 @@ void ioinit() {
   sendcr = 0;
 #endif
 
+#ifdef STM32
+  /* use STANDALONE later ! */
+  idd = ISERIAL;
+  odd = OSERIAL;
+#else
 /* signal handling - by default SIGINT which is ^C is always caught and 
   leads to program stop. Side effect: the interpreter cannot be stopped 
   with ^C, it has to be left with CALL 0, works on Linux, Mac and MINGW
@@ -134,7 +139,8 @@ void ioinit() {
 
 /* all serial protocolls, ttl channels, SPI and Wire */
   serialbegin();
-  
+#endif
+
 #ifdef POSIXPRT
   prtbegin();
 #endif
@@ -146,7 +152,9 @@ void ioinit() {
 #endif
 
 /* filesystems and networks */
+#ifdef FILESYSTEMDRIVER
   fsbegin();
+#endif
 #ifdef POSIXMQTT
   netbegin();  
   mqttbegin();
@@ -173,7 +181,9 @@ void ioinit() {
 #endif
 
 /* the eeprom dummy */
-  ebegin();
+#ifdef EEPROMMEMINTERFACE
+ebegin();
+#endif
 
 /* activate the iodefaults */
   iodefaults();
@@ -381,7 +391,7 @@ uint16_t availch(){
  *    flow control and volatile timing to receive more 
  *    then 64 bytes 
  */
- 
+#ifndef STM32 
 uint16_t inb(char *b, int16_t nb) {
   long m;
   uint16_t z;
@@ -411,7 +421,7 @@ uint16_t inb(char *b, int16_t nb) {
   } 
   return z;
 }
-
+#endif
 /*
  * reading from the console with inch, local echo is handled by the terminal
  */
@@ -422,8 +432,12 @@ uint16_t consins(char *b, uint16_t nb) {
   z=1;
   while(z < nb) {
     c=inch();
+#ifndef STM32
     if (c == '\r') c=inch();
     if (c == '\n' || cheof(c)) { /* terminal character is either newline or EOF */
+#else
+    if (c == '\r' || c == '\n'){
+#endif
       break;
     } else {
       b[z++]=c;
@@ -586,8 +600,10 @@ void outs(char *ir, uint16_t l){
 
 
 /*  handling time, remember when we started, needed in millis() */
+#ifdef HASTIME
 struct timeb start_time;
 void timeinit() { ftime(&start_time); }
+#endif
 
 /* starting wiring for raspberry */
 void wiringbegin() {
@@ -963,7 +979,7 @@ char vt52read() { return 0; }
 /* 
  * Real Time clock code 
  */
-
+#ifdef HASCLOCK
 void rtcbegin() {}
 
 uint16_t rtcget(uint8_t i) {
@@ -992,7 +1008,7 @@ uint16_t rtcget(uint8_t i) {
 }
 
 void rtcset(uint8_t i, uint16_t v) {}
-
+#endif
 /* 
  * Wifi and MQTT code 
  */
@@ -1028,27 +1044,34 @@ char mqttread() {return 0;};
  *  EEPROM handling, these function enable the @E array and 
  *  loading and saving to EEPROM with the "!" mechanism
  *  a filesystem based dummy
- */ 
+ */
+#ifdef EEPROMMEMINTERFACE
 int8_t eeprom[EEPROMSIZE];
 void ebegin(){ 
   int i;
-//  FILE* efile;
+  FILE* efile;
   for (i=0; i<EEPROMSIZE; i++) eeprom[i]=-1;
-//  efile=fopen("eeprom.dat", "r");
-//  if (efile) fread(eeprom, EEPROMSIZE, 1, efile);
+  efile=fopen("eeprom.dat", "r");
+  if (efile) fread(eeprom, EEPROMSIZE, 1, efile);
 }
 
 void eflush(){
-//  FILE* efile;
-//  efile=fopen("eeprom.dat", "w");
-//  if (efile) fwrite(eeprom, EEPROMSIZE, 1, efile);
-//  fclose(efile);
+  FILE* efile;
+  efile=fopen("eeprom.dat", "w");
+  if (efile) fwrite(eeprom, EEPROMSIZE, 1, efile);
+  fclose(efile);
 }
 
 uint16_t elength() { return EEPROMSIZE; }
 void eupdate(uint16_t a, int8_t c) { if (a>=0 && a<EEPROMSIZE) eeprom[a]=c; }
 int8_t eread(uint16_t a) { if (a>=0 && a<EEPROMSIZE) return eeprom[a]; else return -1;  }
-
+#elif defined(STM32)
+/* no real EEPROM on this target - report empty so callers take the "no EEPROM" path */
+void eflush() {}
+uint16_t elength() { return 0; }
+void eupdate(uint16_t a, int8_t c) {}
+int8_t eread(uint16_t a) { return -1; }
+#endif
 
 /* 
  *	the wrappers of the arduino io functions
@@ -1128,7 +1151,7 @@ uint8_t getbreakpin() { return 1; } /* we return 1 because the breakpin is defin
 #endif
 
 /* we need to do millis by hand except for RASPPI with wiring */
-#if !defined(POSIXWIRING)
+#if !defined(POSIXWIRING) && !defined(STM32)
 unsigned long millis() { 
   struct timeb thetime;
   ftime(&thetime);
@@ -1183,13 +1206,27 @@ void byield() {
 }
 
 /* delay must be implemented to use byield() while waiting */
-void bdelay(uint32_t t) { 
+#ifndef STM32
+void bdelay(uint32_t t) {
   unsigned long i;
   if (t>0) {
     i=millis();
     while (millis() < i+t) byield();
-  } 
+  }
 }
+#else
+/* no millis() on this target - approximate via the real frame counter
+   (~16.7ms/frame at 60Hz). byield() itself fires per statement/character,
+   not per frame, so counting byield() calls has no fixed relationship
+   to elapsed wall-clock time - only get_frame_counter() does. */
+void bdelay(uint32_t t) {
+  uint32_t frames = t / 17;
+  uint32_t target;
+  if (t > 0 && frames == 0) frames = 1;
+  target = get_frame_counter() + frames;
+  while (get_frame_counter() < target) byield();
+}
+#endif
 
 #ifdef FASTTICKERPROFILE
 int avgfastticker() {
@@ -1234,18 +1271,17 @@ void yieldschedule() {}
  *
  * file system code is a wrapper around the POSIX API
  */
+#ifdef FILESYSTEMDRIVER
 void fsbegin() {}
 FILE* ifile;
 FILE* ofile;
-#ifdef MSDOS
-void* root;
-void* file;
-#elif defined(STM32)
-//DIR* root;
-//struct dirent* file; 
-#else
+#ifndef MSDOS
 DIR* root;
 struct dirent* file; 
+#else
+void* root;
+void* file;
+#endif 
 #endif 
 
 /* the buildin file system for ro access - transfered and simplified from the Arduino runtime.cpp */
@@ -1261,6 +1297,8 @@ char buildin_tempname[FBUFSIZE]; /* this is needed for the catalog code as strin
 
 
 /* POSIX OSes always have filesystems */
+#ifdef HASFILEIO
+
 uint8_t fsstat(uint8_t c) { return 1; }
 
 /*
@@ -1330,7 +1368,7 @@ uint8_t ifileopen(const char* filename){
     }
   }
 #endif
-  ifile=0; //fopen(filename, "r");
+  ifile=fopen(filename, "r");
   return ifile!=0;
 }
 
@@ -1346,7 +1384,7 @@ void ifileclose(){
 }
 
 uint8_t ofileopen(const char* filename, const char* m){
-  ofile=0; //fopen(filename, m);
+  ofile=fopen(filename, m);
   return ofile!=0;
 }
 
@@ -1386,11 +1424,10 @@ void rootopen() {
   buildin_rootpointer=0;
   buildin_rootactive=1;
 #endif
-#ifdef MSDOS
-  (void) findfirst("*.*", bffblk, 0);
-#elif defined(STM32)
-#else 
+#ifndef MSDOS
   root=opendir ("./");
+#else 
+  (void) findfirst("*.*", bffblk, 0);
 #endif
 }
 
@@ -1407,12 +1444,11 @@ uint8_t rootnextfile() {
     }
   }
 #endif
-#ifdef MSDOS
-  return (findnext(bffblk) == 0);
-#elif defined(STM32)
-#else 
+#ifndef MSDOS
   file = readdir(root);
   return (file != 0);
+#else 
+  return (findnext(bffblk) == 0);
 #endif
 }
 
@@ -1420,7 +1456,7 @@ uint8_t rootisfile() {
 #ifdef HASBUILDIN
   if (buildin_rootactive) return 1;
 #endif
-#if !defined(MSDOS) && !defined(MINGW) && !defined(STM32)
+#if !defined(MSDOS) && !defined(MINGW)
   return (file->d_type == DT_REG);
 #else
   return 1;
@@ -1437,12 +1473,10 @@ const char* rootfilename() {
     }
   }
 #endif
-#ifdef MSDOS
-  return (bffblk->ff_name);
-#elif defined(STM32)
-  return "n";
-#else
+#ifndef MSDOS
   return (file->d_name);
+#else
+  return (bffblk->ff_name);
 #endif  
 }
 
@@ -1469,7 +1503,7 @@ void rootclose(){
 #ifdef HASBUILDIN
   buildin_rootactive=0;
 #endif
-#if !defined(MSDOS) && !defined(STM32)
+#ifndef MSDOS
   (void) closedir(root);
 #endif  
 }
@@ -1487,6 +1521,7 @@ void removefile(const char *filename) {
 void formatdisk(uint8_t i) {
   puts("Format not implemented on this platform.");
 }
+#endif
 
 /* 
  *  The buffer code, a simple buffer to store output and 
@@ -1625,11 +1660,32 @@ void serialflush() { }
 #else 
 /* the blocking code only uses puchar and getchar */
 void serialbegin(){}
-char serialread() { 
-  while (check_char() == '\0') { byield(); }
-  char ch = get_char();
-  put_char(ch);
-  return ch;
+char serialread() {
+#ifdef STM32
+  static char linebuf[BUFSIZE] __attribute__((section(".data")));
+#else
+  static char linebuf[BUFSIZE];
+#endif
+  static uint16_t linelen = 0;
+  static uint16_t lineptr = 0;
+  char ch;
+
+  if (lineptr < linelen) return linebuf[lineptr++];
+
+  linelen = 0;
+  while (1) {
+    while (check_char() == '\0') { byield(); }
+    ch = get_char();
+    put_char(ch);
+    if (ch == 8 || ch == 127) {
+      if (linelen > 0) linelen--;
+      continue;
+    }
+    if (linelen < BUFSIZE - 1) linebuf[linelen++] = ch;
+    if (ch == '\r' || ch == '\n') break;
+  }
+  lineptr = 0;
+  return linebuf[lineptr++];
 }
 char serialcheckch(){ if(check_char() != '\0') return 1; else return 0; }
 uint16_t serialavailable() { if(check_char() != '\0') return 1; else return 0; }
@@ -1643,9 +1699,11 @@ uint8_t serialstat(uint8_t c) {
 }
 
 /* send the CSI sequence to start with ANSI */
+#ifdef POSIXTERMINAL
 void sendcsi() {
-  put_char(27); put_char('['); /* CSI */
+  putchar(27); putchar('['); /* CSI */
 }
+#endif
 
 /* the vt52 state engine */
 #ifdef POSIXVT52TOANSI
@@ -1676,25 +1734,25 @@ void dspsetcursorx(uint8_t i) {
 void dspsetfgcolor(uint8_t co) {
   sendcsi();
   if (co < 8) {
-    put_char('3');
+    putchar('3');
   } else {
-    put_char('9');
+    putchar('9');
     co=co-8;
   }
-  put_char('0'+co);
-  put_char('m');
+  putchar('0'+co);
+  putchar('m');
 }
 
 void dspsetbgcolor(uint8_t co) {
   sendcsi();
   if (co < 8) {
-    put_char('4');
+    putchar('4');
   } else {
-    put_char('1'); put_char('0');
+    putchar('1'); putchar('0');
     co=co-8;
   }
-  put_char('0'+co);
-  put_char('m');
+  putchar('0'+co);
+  putchar('m');
 }
 
 /* vt52 state engine, a smaller version of the Arduino code*/
@@ -1770,19 +1828,19 @@ void dspvt52(char* c){
       break;
     case 'A': // cursor up
       sendcsi();
-      put_char('A');
+      putchar('A');
       break;
     case 'B': // cursor down 
       sendcsi();
-      put_char('B');
+      putchar('B');
       break;
     case 'C': // cursor right 
       sendcsi();
-      put_char('C');
+      putchar('C');
       break; 
     case 'D': // cursor left 
       sendcsi();
-      put_char('D');
+      putchar('D');
       break;
     case 'E': // GEMDOS / TOS extension clear screen 
       *c=12; 
@@ -1799,37 +1857,37 @@ void dspvt52(char* c){
       return;
     case 'J': // clear to end of screen 
       sendcsi();
-      put_char('J');
+      putchar('J');
       break;
     case 'd': // GEMDOS / TOS extension clear to start of screen 
       sendcsi();
-      put_char('1'); put_char('J');
+      putchar('1'); putchar('J');
       break;
     case 'K': // clear to the end of line
       sendcsi();
-      put_char('K');
+      putchar('K');
       break;
     case 'l': // GEMDOS / TOS extension clear line 
       sendcsi();
-      put_char('2'); put_char('K');
+      putchar('2'); putchar('K');
       break;
     case 'o': // GEMDOS / TOS extension clear to start of line
       sendcsi();
-      put_char('1'); put_char('K');
+      putchar('1'); putchar('K');
       break;
     case 'k': // GEMDOS / TOS extension restore cursor
       break;
     case 'j': // GEMDOS / TOS extension save cursor
       break;
     case 'I': // reverse line feed
-      put_char(27);
-      put_char('M');
+      putchar(27);
+      putchar('M');
       break;
     case 'L': // Insert line
       break;
     case 'M': // Delete line - questionable 
       sendcsi();
-      put_char('2'); put_char('K');
+      putchar('2'); putchar('K');
       break;
   }
   dspesc=0;
@@ -1865,11 +1923,11 @@ void serialwrite(char c) {
 /* form feed is clear screen - compatibility with Arduino code */
     case 12:
       sendcsi();
-      put_char('2'); put_char('J');
+      putchar('2'); putchar('J');
 /* home sequence in the arduino code */
     case 2: 
       sendcsi();
-      put_char('H');
+      putchar('H');
       return;
   }
 #endif
@@ -1887,7 +1945,7 @@ void serialwrite(char c) {
  */
 #ifdef POSIXPRT
 #include <fcntl.h>
-#if !defined(MSDOS) && !defined(MINGW) && !defined(STM32)
+#if !defined(MSDOS) && !defined(MINGW)
 #include <termios.h>
 #endif
 
@@ -1901,7 +1959,7 @@ char prtbuf = 0;
 void prtbegin() {}
 
 char prtopen(char* filename, uint16_t mode) {
-#if !defined(MSDOS) && !defined(MINGW) && !defined(STM32)
+#if !defined(MSDOS) && !defined(MINGW)
 
 /* try to open the device file */
   prtfile=open(filename, O_RDWR | O_NOCTTY);

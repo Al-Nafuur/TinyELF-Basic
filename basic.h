@@ -184,7 +184,7 @@
 #define TFEND -10
 /* these are multibyte token extension, currently unused */
 /* using them would allow over 1000 BASIC keywords */
-#define TEXT7 -9
+#define TFTPCONN -9
 #define TEXT6 -8
 #define TEXT5 -7
 #define TEXT4 -6
@@ -742,11 +742,14 @@ void xlocate();
 void stringtobuffer(char*, string_t*);
 void getfilename(char*, char);
 void xsave();
-void xload(const char*);
+//void xload(const char*);
+void xload();
 void xget();
 void xput();
 void xset();
 void xnetstat();
+
+void serialload(unsigned char);
 
 /* Arduino IO control interface */
 void xaread();
@@ -783,6 +786,8 @@ void xfwire();
 /* timers */
 void xafter();
 void xevent();
+
+void xftpconn();
 
 /* File I/O functions */
 char streq(const char*, char*);

@@ -36,7 +36,7 @@
  *		if MEMSIZE=0 a heuristic is used based on free heap
  *		size and architecture parameters
  */
-#define MEMSIZE 32768
+#define MEMSIZE 64512
 
 /* 
  * Hardware flags of the POSIX systems 
@@ -133,7 +133,7 @@
 #define EEPROMSIZE 1024
 
 /* they all have this */
-#define FILESYSTEMDRIVER
+#undef FILESYSTEMDRIVER
 
 /* and they have this */
 #ifdef HASTIMER

@@ -301,10 +301,11 @@ extern uint8_t bsystype;
 #define LONGYIELDINTERVAL 1000
 #define YIELDINTERVAL 32
 
-void byield(); 
-void bdelay(uint32_t); 
-void fastticker(); 
-void yieldfunction(); 
+void byield();
+void bdelay(uint32_t);
+void fastticker();
+void yieldfunction();
+uint32_t get_frame_counter(void);
 void longyieldfunction();
 void yieldschedule();
 

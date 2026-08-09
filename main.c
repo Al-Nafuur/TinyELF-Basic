@@ -21,6 +21,7 @@
 #include "vcsLib.h"
 
 #define TEXT_HEIGHT        12     // 12 lines tall
+#define TEXT_LINE_SPACING   1
 #define ROW_LENGTH         36     // 36 characters per row
 #define NUM_OF_ROWS        14     // 14 rows
 
@@ -229,7 +230,12 @@ uint8_t gfxArray[108][TEXT_HEIGHT] = {
   { 0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0 }     // 127 Delete
 };
 
-uint8_t videoRAM[(NUM_OF_ROWS * TEXT_HEIGHT * 20 ) + 20] __attribute__((aligned(4))) = { [0 ... ((NUM_OF_ROWS * TEXT_HEIGHT * 20 ) + 19)] = 0x00 };
+static uint8_t* const gfxFlat = &gfxArray[0][0];
+static const uint16_t gfxFlatSize = (uint16_t)(108u * TEXT_HEIGHT);
+
+/* keep out of CCMRAM (mem[] needs it) - alignment 4 bytes for
+   scroll_video_ram()'s word-wise memmove. */
+uint8_t videoRAM[(NUM_OF_ROWS * TEXT_HEIGHT * 20 ) + 20] __attribute__((aligned(4), section(".data"))) = { [0 ... ((NUM_OF_ROWS * TEXT_HEIGHT * 20 ) + 19)] = 0x00 };
 
 uint8_t bkColorRAM[NUM_OF_ROWS * (TEXT_HEIGHT + 1 )] = { [ 0 ... ( NUM_OF_ROWS * (TEXT_HEIGHT + 1 ) - 1)] = COL_BACKGROUND };
 
@@ -252,7 +258,7 @@ uint8_t playfieldShadowRAM[NUM_OF_ROWS * 5] = {
   COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0
 };
 
-uint8_t tiaShadowRAM[26] = { 
+uint8_t tiaShadowRAM[27] = { 
   0x0f, // 00: CHAR_MASK (use upper or lower nibble char in charset)
   0,    // 01: CURSOR_COL
   0,    // 02: CURSOR_ROW
@@ -282,9 +288,81 @@ uint8_t tiaShadowRAM[26] = {
   0     // 1A: AUDV1  Audio Volume 1    (rw)
 };
 
-uint8_t riotShadowRAM[10] = { 0,0,0,0,0,0,0,0,0,0 };
+/* mirror RAM for the RIOT register block (0x280-0x297), indexed by
+   (address & 0x1F) - same idiom as the rest of this dispatcher: a bit
+   test selects the region, a mask sized to the array bounds the index,
+   so no separate range check or offset subtraction is needed. Aligned
+   to 4 bytes so frameCounter below can be read/written as a uint32_t. */
+uint8_t riotShadowRAM[0x20] __attribute__((aligned(4))) = { [0 ... 0x1F] = 0 };
+
+/* free-running frame counter, incremented once per renderDisplayFrame()
+   call in bloop(). Lives byte-wise inside riotShadowRAM, in the free
+   gap between TIMINT (0x285) and TIM1T (0x294), POKE/PEEK-able from
+   BASIC at FRAMECOUNTER_ADDR..+3 (LSB first). */
+#define FRAMECOUNTER_ADDR 0x288
+#define frameCounter (*(uint32_t*)&riotShadowRAM[FRAMECOUNTER_ADDR & 0x1F])
+
+/* accessor for runtime.c (bdelay() needs the real frame counter, not the
+   byield()-call count, to approximate real time) */
+uint32_t get_frame_counter(void) { return frameCounter; }
+
+/* render-cadence token budget (statements executed between renders in
+   bloop()) - computed at boot from the real clock (see setup()), but
+   POKE/PEEK-able as a 16 bit value at TOKENBUDGET_ADDR/+1 (LSB first)
+   for interactive tuning without rebuilding: crank it up until the
+   picture starts to roll, then back off. */
+#define TOKENBUDGET_ADDR 0x28C
+#define tokenBudget (*(uint16_t*)&riotShadowRAM[TOKENBUDGET_ADDR & 0x1F])
 
 char active_char = '\0';
+
+// note: sizeof(CustomOverblank) MUST be exactly 49 bytes and end on "jmp $1000"
+static const uint8_t CustomOverblank[] = {
+  0xea,				//   nop            ; add nops to make sure the code is 49 bytes long
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xea,				//   nop
+	0xa0, 0x1e,			//   ldy #$1e        ; 30 lines over Overscan
+	0xa2, 0x02,			//   ldx #2
+						// Overscan:   
+	0x85, 0x02,			//   sta WSYNC       ; wait for next scanline
+	0x88,				//   dey
+	0xd0, 0xfb, 		//   bne Overscan
+						// VerticalSync:
+	0x86, 0x00,			//   stx VSYNC
+	0x85, 0x02,			//   sta WSYNC
+	0x85, 0x02,			//   sta WSYNC
+	0x85, 0x02,			//   sta WSYNC
+	0xa2, 0x00,			//   ldx #0
+	0x86, 0x00,			//   stx VSYNC
+	0xa0, 0x1b,			//   ldy #$1b        ; 27 lines of Vertical Blank
+						// VerticalBlank:   
+	0x85, 0x02,			//   sta WSYNC       ; wait for next scanline
+	0x88,				//   dey
+	0xd0, 0xfb,			//   bne VerticalBlank
+						// WaitForCart:
+	0xae, 0xff, 0x1f,	//   ldx $1fff
+	0xd0, 0xfb,			//   bne WaitForCart
+	0x4c, 0x00, 0x10	//   jmp $1000
+};
+
+RAM_FUNC void vcsCopyCustomOverblankToRiotRam(){
+	for(int i = 0; i < sizeof(CustomOverblank); i++)
+	{
+		vcsWrite5((uint8_t)(0x80 + i), CustomOverblank[i]);
+	}
+}
+
+
 
 __attribute__((optimize("O3","no-tree-loop-distribute-patterns")))
 RAM_FUNC void scroll_video_ram(){
@@ -299,6 +377,10 @@ RAM_FUNC void scroll_video_ram(){
 
   /* clear the freed tail */
   memset(&videoRAM[0] + (sizeof(videoRAM) - 260), 0, 240);
+
+  /* this cost (was previously invisible to tokenCounter - no yield at all)
+     counts against the render-cadence budget like everything else. */
+  byield();
 }
 
 RAM_FUNC void positioningTiaElement(uint8_t i, uint8_t x){
@@ -470,8 +552,13 @@ RAM_FUNC void renderDisplayFrame() {
     vcsSta3(PF2);
 
     // DELAY_X_CYCLES 48
-    vcsSleep(37 + tiaShadowRAM[EVEN_FRAME]); // we skip 14 (odd frame) 15(even frame) 
-                              // cycles of bankswitching code here
+    // we skip 14 (odd frame) 15(even frame) 
+    // cycles of bankswitching code here
+    if(tiaShadowRAM[EVEN_FRAME]){
+      vcsSleep(38);
+    } else {
+      vcsSleep(37);
+    }
 
     if (tiaShadowRAM[EVEN_FRAME]){
         kernel_a = true;
@@ -483,17 +570,18 @@ RAM_FUNC void renderDisplayFrame() {
     }
 
     for (uint8_t row = 0; row < NUM_OF_ROWS; row++) {
+        uint8_t row_base = row * (TEXT_HEIGHT + TEXT_LINE_SPACING);
         if (kernel_a){ // KERNEL_A
             for (uint8_t line = 0; line < TEXT_HEIGHT; line++) {
                 KERNEL_1_line(linePtr, SET_SP);
                 line++;
                 linePtr += 20;
-                KERNEL_2_line(linePtr, USE_ENAM1,  bkColorRAM[(row * (TEXT_HEIGHT + 1 )) + line++]);
+                KERNEL_2_line(linePtr, USE_ENAM1,  bkColorRAM[row_base + line++]);
                 linePtr += 20;
                 KERNEL_1_line(linePtr, FREE_CYCLES);
                 line++;
                 linePtr += 20;
-                KERNEL_2_line(linePtr, USE_ENAM0,  bkColorRAM[(row * (TEXT_HEIGHT + 1 )) + line]);
+                KERNEL_2_line(linePtr, USE_ENAM0,  bkColorRAM[row_base + line]);
                 linePtr += 20;
             }
             // KERNEL_A_END
@@ -503,7 +591,7 @@ RAM_FUNC void renderDisplayFrame() {
             vcsSta3(GRP0);  //3  @9
             vcsSta3(GRP1);  //3  @12
 
-            vcsLda2( bkColorRAM[(row * (TEXT_HEIGHT + 1 )) + 12] );
+            vcsLda2( bkColorRAM[row_base + 12] );
             vcsSta3(COLUBK);
             if(row < (NUM_OF_ROWS - 1 )){
                 uint8_t n_row = row + 1;
@@ -558,12 +646,12 @@ RAM_FUNC void renderDisplayFrame() {
             }
         } else { // KERNEL_B
             for (uint8_t line = 0; line < TEXT_HEIGHT; line++) {
-                KERNEL_2_line(linePtr, USE_ENAM1,  bkColorRAM[(row * (TEXT_HEIGHT + 1 )) + line++]);
+                KERNEL_2_line(linePtr, USE_ENAM1,  bkColorRAM[row_base + line++]);
                 linePtr += 20;
                 KERNEL_1_line(linePtr, FREE_CYCLES);
                 line++;
                 linePtr += 20;
-                KERNEL_2_line(linePtr, USE_ENAM0,  bkColorRAM[(row * (TEXT_HEIGHT + 1 )) + line++]);
+                KERNEL_2_line(linePtr, USE_ENAM0,  bkColorRAM[row_base + line++]);
                 linePtr += 20;
                 KERNEL_1_line(linePtr, SET_SP);
                 linePtr += 20;
@@ -573,7 +661,7 @@ RAM_FUNC void renderDisplayFrame() {
             vcsSta3(GRP0);  //3  @9
             vcsSta3(GRP1);  //3  @12
 
-            vcsLda2( bkColorRAM[(row * (TEXT_HEIGHT + 1 )) + 12] );
+            vcsLda2( bkColorRAM[row_base + 12] );
             vcsSta3(COLUBK);
 
             if(row < (NUM_OF_ROWS - 1) ){
@@ -622,32 +710,31 @@ RAM_FUNC void renderDisplayFrame() {
 }
 
 // write ASCII char at text cell position (col, row)
-RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c) {
-    static const uint8_t uls[18] = {3,4,5,4,5,4,5,5,5,5,5,5,5,4,5,4,5,4};
-    static const uint8_t lls[18] = {1,0,1,0,1,0,1,1,1,1,1,1,1,0,1,0,1,0};
+static const uint8_t vram_uls[18] = {3,4,5,4,5,4,5,5,5,5,5,5,5,4,5,4,5,4};
+static const uint8_t vram_lls[18] = {1,0,1,0,1,0,1,1,1,1,1,1,1,0,1,0,1,0};
 
-    /* mask_uls bleibt sinnvoll (verschiedene Werte) */
+RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c) {
+    /* mask_uls might be usefull later
     static const uint8_t mask_uls[18] = {
         0x07, 0x0F, 0x1F, 0x0F, 0x1F, 0x0F, 0x1F, 0x1F,
         0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x0F, 0x1F, 0x0F,
         0x1F, 0x0F
-    };
+    };*/
     uint8_t pair = col >> 1;
     int rowBase = row * TEXT_HEIGHT * 20;
 
     // Hoisting: diese Werte ändern sich in der Schleife nicht
-    const uint8_t u = uls[pair];
-    const uint8_t l = lls[pair];
-    const uint8_t masku = mask_uls[pair];       // für uls-LEFT-fill
-    const uint8_t high_fill = (l ? 0x80u : 0x00u); // für lls-used-as-right-fill
-    const uint8_t low_fill = (uint8_t)l;        // für lls-used-as-left-fill (0 oder 1)
+    const uint8_t u = vram_uls[pair];
+    const uint8_t l = vram_lls[pair];
+    const uint8_t high_fill = (l ? 0x80u : 0x00u); // for lls-used-as-right-fill
+    const uint8_t low_fill = (uint8_t)l;           // for lls-used-as-left-fill (0 or 1)
     const uint8_t my_mask  = tiaShadowRAM[CHAR_MASK];
     bool cond = ( my_mask == 0xf0);
     const uint8_t my_flag  = cond ? 0xff : 0x00;
     const uint8_t my_shift = cond ? 4    : 0;
 
 
-    int vline = rowBase; // starts at rowBase, we increment um 20 pro iteration
+    int vline = rowBase; // starts at rowBase, we increment 20 per iteration
     for (uint8_t line = 0; line < TEXT_HEIGHT; ++line) {
         uint8_t chr = (gfxArray[c - 32][line] & my_mask ) >> my_shift;
         if (col & 1) {
@@ -671,19 +758,83 @@ RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c) {
 RAM_FUNC void vram_del_char_at(uint8_t col, uint8_t row){
     uint8_t pair = col >> 1;
     int rowBase = row * TEXT_HEIGHT * 20;
+    uint8_t l = vram_lls[pair];
+    uint8_t clearMask;
+
+    /* the exact bit range a column owns in its shared byte depends on the
+       u/l fine-position shift of that column pair (see vram_write_char_at);
+       the blanket 0xF0/0x0F masks used here before only happened to be
+       correct for shift==4 pairs - for shift 3 or 5, and for column 1's
+       special right-fill (high_fill) bit, they either left bits stuck or
+       clobbered the neighbouring column's bits. */
+    if (col & 1) {
+        if (col == 1) {
+            /* col1 writes (chr>>l) into bits [0..3-l] plus bit7 (high_fill) */
+            clearMask = (uint8_t)(((1u << (4 - l)) - 1) | (l ? 0x80u : 0u));
+        } else {
+            /* odd column writes (chr<<l) into bits [l..l+3] plus bit0 (low_fill) when l==1 */
+            clearMask = (uint8_t)((0x0Fu << l) | (l ? 0x01u : 0u));
+        }
+    } else {
+        /* even column writes (chr<<u) into bits [u..u+3], truncated at bit7 */
+        clearMask = (uint8_t)(0x0Fu << vram_uls[pair]);
+    }
+
     for (uint8_t line = 0; line < TEXT_HEIGHT; line++) {
         int vline = line * 20;
-        if(col & 1){
-            if(col == 1){
-                videoRAM[rowBase + vline + 19] = 0;
-            }
-            videoRAM[rowBase + vline + pair] &= 0xF0;
-        }else{
-            videoRAM[rowBase + vline + pair] &= 0x0F;
+        if(col == 1){
+            videoRAM[rowBase + vline + 19] = 0;
         }
+        videoRAM[rowBase + vline + pair] &= (uint8_t)~clearMask;
         if(pair == 0 || pair == 2){
             videoRAM[rowBase + vline + 18] = (videoRAM[rowBase + vline] & 0x07) | (videoRAM[rowBase + vline + 2] & 0xF8);
         }
+    }
+}
+
+/* blinking input cursor - reuses the inverse-charset trick (CHAR_MASK)
+   to draw an inverted space as a solid block, 16 frames per phase
+   (matches Atari 8-bit OS: 1.875 Hz on NTSC / 1.5625 Hz on PAL) */
+extern mem_t st;
+static uint8_t cursorBlinkTimer = 0;
+static bool cursorBlinkOn = false;
+/* set around ins() calls in xinput() so the cursor also blinks while a
+   running program is waiting on INPUT, not just at the interactive
+   READY prompt */
+bool inputActive = false;
+
+RAM_FUNC static void cursor_draw(bool visible) {
+    if (visible) {
+        uint8_t savedMask = tiaShadowRAM[CHAR_MASK];
+        tiaShadowRAM[CHAR_MASK] = 0xf0;
+        vram_write_char_at(tiaShadowRAM[CURSOR_COL], tiaShadowRAM[CURSOR_ROW], ' ');
+        tiaShadowRAM[CHAR_MASK] = savedMask;
+    } else {
+        /* vram_write_char_at() ORs pixel bits in on odd columns (two cells
+           share a byte), so writing a blank space can never clear a
+           previously set cursor block there - use the dedicated eraser,
+           which correctly ANDs the bits away, instead. */
+        vram_del_char_at(tiaShadowRAM[CURSOR_COL], tiaShadowRAM[CURSOR_ROW]);
+    }
+}
+
+RAM_FUNC void cursor_reset(void) {
+    if (cursorBlinkOn) {
+        cursor_draw(false);
+        cursorBlinkOn = false;
+    }
+    cursorBlinkTimer = 0;
+}
+
+RAM_FUNC void cursor_update(void) {
+    if (st != SINT && !inputActive) {
+        cursor_reset();
+        return;
+    }
+    if (++cursorBlinkTimer >= 16) {
+        cursorBlinkTimer = 0;
+        cursorBlinkOn = !cursorBlinkOn;
+        cursor_draw(cursorBlinkOn);
     }
 }
 
@@ -697,6 +848,7 @@ RAM_FUNC void next_row(){
 }
 
 RAM_FUNC void put_char(char c){
+    cursor_reset();
     if(c == '\n' || c == '\r' ){
         next_row();
     }else if( c == 127 || c == 8 ){
@@ -745,10 +897,11 @@ void vcs_memwrite2(number_t address, number_t value){
   if (address & 0x1000){                   // Video RAM
     videoRAM[address & 0xfff] = value;     // Check for (address & 0xfff) <= 3360  (0xd20)
   }else if (address & 0x800){              // Character RAM
-    gfxArray[0][address & 0x7ff] = value & 0xf;  // Check for (address & 0x7ff) <= 1296  (0x510)
+    gfxFlat[address & 0x7ff] = (uint8_t)value;  // Check for (address & 0x7ff) <= 1296  (0x510)
   }else if (address & 0x400){              // Background color RAM
     bkColorRAM[address & 0x3ff] = value;   // Check for (address & 0x3ff) <=  182  (0x0b6)
-//  }else if(address >= 0x280 && address <= 0x297){ // RIOT write (SWACNT, SWBCNT and TIMINIT ?)
+  }else if (address & 0x200){              // RIOT mirror RAM (incl. frameCounter and tokenBudget)
+    riotShadowRAM[address & 0x1F] = (uint8_t)value;
   }else if (address & 0x100){              // Text color RAM
     txtColorRAM[address & 0x0f] = value;   // Check for (address & 0x0f) <=  14  (0x00e)
   }else if (address & 0x80){               // playfieldShadowRAM
@@ -762,13 +915,11 @@ mem_t vcs_memread2(number_t address){
   if (address & 0x1000){                   // Video RAM
     return videoRAM[address & 0xfff];     // Check for (address & 0xfff) <= 3360  (0xd20)
   }else if (address & 0x800){              // Character RAM
-    return gfxArray[0][address & 0x7ff];   // Check for (address & 0x7ff) <= 1296  (0x510)
+    return gfxFlat[address & 0x7ff];   // Check for (address & 0x7ff) <= 1296  (0x510)
   }else if (address & 0x400){              // Background color RAM
     return bkColorRAM[address & 0x3ff];   // Check for (address & 0x3ff) <=  182  (0x0b6)
-  }else if(address >= 0x280 && address <= 0x285){ // RIOT I/O reads
-    return riotShadowRAM[address - 0x280];
-  }else if(address >= 0x294 && address <= 0x297){ // RIOT (Timer) read
-    return riotShadowRAM[address - 0x28E];
+  }else if (address & 0x200){              // RIOT mirror RAM (incl. frameCounter)
+    return riotShadowRAM[address & 0x1F];
   }else if (address & 0x100){              // Text color RAM
     return txtColorRAM[address & 0x0f];   // Check for (address & 0x0f) <=  14  (0x00e)
   }else if (address & 0x80){               // playfieldShadowRAM
@@ -776,14 +927,17 @@ mem_t vcs_memread2(number_t address){
   }else if(address < 0x1b){               // TIA write address
     return tiaShadowRAM[address];
   }
+  return 0x00;
 }
-
-const uint8_t w_message[] = "TinyELF Basic v0.5 " STR(MEMSIZE) " Bytes Free\nREADY\n";
 
 uint32_t tokenCounter = 0;
 bool key_restrainer = false;
 
+static uint32_t* g_mainArgs = 0;
+
 RAM_FUNC int elf_main(uint32_t* args) {
+    g_mainArgs = args;
+
     // Always reset PC first, cause it's going to be close to the end of the 6507 address space
     vcsJmp3();
 	
@@ -793,12 +947,10 @@ RAM_FUNC int elf_main(uint32_t* args) {
       vcsSta3(i);
     }
 
-    vcsCopyOverblankToRiotRam();
+    //vcsCopyOverblankToRiotRam();
+    vcsCopyCustomOverblankToRiotRam();
 
     vcsStartOverblank();
-    for (uint8_t i = 0; i < sizeof(w_message) - 1; i++) {
-        put_char(w_message[i]);
-    }
 
     setup();
 
@@ -899,10 +1051,13 @@ const char sload[]   PROGMEM = "LOAD";
 const char sget[]    PROGMEM = "GET";
 const char sput[]    PROGMEM = "PUT";
 const char sset[]    PROGMEM = "SET";
-const char scls[]    PROGMEM = "CLS";
 const char slocate[]  PROGMEM = "LOCATE";
+#endif
+#if defined(HASSTEFANSEXT) || defined(STM32)
+const char scls[]    PROGMEM = "CLS";
 const char selse[]  PROGMEM  = "ELSE";
 #endif
+
 /* Arduino functions */
 #ifdef HASARDUINOIO
 const char spinm[]    PROGMEM = "PINM";
@@ -922,8 +1077,9 @@ const char stone[]	PROGMEM = "PLAY";
 const char spulse[]	PROGMEM = "PULSE";
 #endif
 /* DOS functions */
-#ifdef HASFILEIO
 const char scatalog[]	PROGMEM = "CATALOG";
+const char sftpconn[]	PROGMEM = "CONNECT";
+#ifdef HASFILEIO
 const char sdelete[]	PROGMEM = "DELETE";
 const char sfopen[]		PROGMEM = "OPEN";
 const char sfclose[]	PROGMEM = "CLOSE";
@@ -1048,8 +1204,13 @@ const char* const keyword[] PROGMEM = {
 #endif
   ssave, sload,
 #ifdef HASSTEFANSEXT
-  sget, sput, sset, scls, slocate, selse,
+  sget, sput, sset, 
 #endif
+  scls,
+#ifdef HASSTEFANSEXT
+  slocate,
+#endif
+  selse,
 #ifdef HASARDUINOIO
   spinm, sdwrite, sdread, sawrite, saread,
   sdelay, smillis, sazero, sled,
@@ -1060,8 +1221,9 @@ const char* const keyword[] PROGMEM = {
 #ifdef HASPULSE
   spulse,
 #endif
+  scatalog, sftpconn,
 #ifdef HASFILEIO
-  scatalog, sdelete, sfopen, sfclose, sfdisk,
+ sdelete, sfopen, sfclose, sfdisk,
 #endif
 #ifdef HASUSRCALL
   susr, scall,
@@ -1133,8 +1295,13 @@ const token_t tokens[] PROGMEM = {
 #endif
   TSAVE, TLOAD,
 #ifdef HASSTEFANSEXT
-  TGET, TPUT, TSET, TCLS, TLOCATE, TELSE,
+  TGET, TPUT, TSET, 
 #endif
+  TCLS,
+#ifdef HASSTEFANSEXT
+  TLOCATE,
+#endif
+  TELSE,
 #ifdef HASARDUINOIO
   TPINM, TDWRITE, TDREAD, TAWRITE, TAREAD, TDELAY, TMILLIS,
   TAZERO, TLED,
@@ -1145,10 +1312,11 @@ const token_t tokens[] PROGMEM = {
 #ifdef HASPULSE
   TPULSE,
 #endif
+  TCATALOG, TFTPCONN,
 #ifdef HASFILEIO
-  TCATALOG, TDELETE, TOPEN, TCLOSE, TFDISK,
+  TDELETE, TOPEN, TCLOSE, TFDISK,
 #endif
-#ifdef HASSTEFANSEXT
+#ifdef HASUSRCALL
   TUSR, TCALL,
 #endif
 #ifdef HASFLOAT
@@ -1203,6 +1371,9 @@ const token_t tokens[] PROGMEM = {
   0
 };
 
+/* the size of the token array */
+const int tokensize = sizeof(tokens) / sizeof(token_t);
+
 /* experimental, do not use right now */
 const bworkfunction_t workfunctions[] PROGMEM = {
   0, 0, 0, xprint, 0
@@ -1210,8 +1381,8 @@ const bworkfunction_t workfunctions[] PROGMEM = {
 
 /* errors and messages */
 const char mfile[]    	PROGMEM = "file.bas";
-const char mprompt[]	PROGMEM = "> ";
-const char mgreet[]		PROGMEM = "Stefan's Basic 2.0";
+const char mprompt[]	PROGMEM = "";
+const char mgreet[]		PROGMEM = "TinyELF Basic v0.7 " STR(MEMSIZE) " Bytes Free\n";
 const char mline[]		PROGMEM = "LINE";
 const char mnumber[]	PROGMEM = "NUMBER";
 const char mvariable[]	PROGMEM = "VARIABLE";
@@ -1274,6 +1445,9 @@ const char* const message[] PROGMEM = {
 #endif
 };
 
+/* the size of the message array */
+const int messagesize = sizeof(message) / sizeof(char*);
+
 /*
  	maxnum: the maximum accurate(!) integer of a
  		32 bit float
@@ -1301,17 +1475,27 @@ const address_t maxaddr = (address_t)(~0);
  	and the arithmetic during run time.
 */
 
+/* CCMRAM is scarce (64K) and reserved for mem[] - everything here that is
+   never touched by the cycle-exact RAM_FUNC rendering path is forced into
+   .data instead (via the section attribute) so the loader places it in
+   the regular file-backed SRAM buffer instead of eating into CCMRAM. */
+#ifdef STM32
+#define CCMRAM_SPARING __attribute__((section(".data")))
+#else
+#define CCMRAM_SPARING
+#endif
+
 /* the stack, all BASIC arithmetic is done here */
-accu_t stack[STACKSIZE];
+accu_t stack[STACKSIZE] CCMRAM_SPARING;
 address_t sp = 0;
 
 /* a small buffer to process string arguments, mostly used for Arduino PROGMEM and string functions */
 /* use with care as it is used in some string functions */
-char sbuffer[SBUFSIZE];
+char sbuffer[SBUFSIZE] CCMRAM_SPARING;
 
 /* the input buffer, the lexer can tokenize this and run from it, bi is an index to this.
    bi must be global as it is the program cursor in interactive mode */
-char ibuffer[BUFSIZE] = "\0";
+char ibuffer[BUFSIZE] CCMRAM_SPARING = "\0";
 char *bi;
 
 /* a static array of variables A-Z for the small systems that have no heap */
@@ -1328,11 +1512,11 @@ mem_t* mem;
 address_t himem, memsize;
 
 /* reimplementation of the loops, will replace the forstack */
-bloop_t loopstack[FORDEPTH];
+bloop_t loopstack[FORDEPTH] CCMRAM_SPARING;
 index_t loopsp = 0;
 
 /* the GOSUB stack remembers an address to jump to */
-address_t gosubstack[GOSUBDEPTH];
+address_t gosubstack[GOSUBDEPTH] CCMRAM_SPARING;
 index_t gosubsp = 0;
 
 /* arithmetic accumulators */
@@ -1529,13 +1713,14 @@ mem_t precision = 5;
  */
 
 /* the millis function for BASIC */
+#ifdef HASARDUINOIO
 void bmillis() {
   number_t m;
   /* millis is processed as integer and is cyclic mod maxnumber and not cast to float!! */
   m = (number_t) (millis() / (unsigned long)pop() % (unsigned long)maxnum);
   push(m);
 }
-
+#endif
 /*
  *   Determine the possible basic memory size.
  * 	using malloc causes some overhead which can be relevant on the smaller
@@ -1610,7 +1795,7 @@ address_t ballocmem() {
 
 /* save a file to EEPROM, disabled if we use the EEPROM directly */
 void esave() {
-#ifndef EEPROMMEMINTERFACE
+#ifdef EEPROMMEMINTERFACE
   address_t a = 0;
 
   /* does the program fit into the eeprom */
@@ -1642,7 +1827,7 @@ void esave() {
 
 /* load a file from EEPROM, disabled if the use the EEPROM directly */
 void eload() {
-#ifndef EEPROMMEMINTERFACE
+#ifdef EEPROMMEMINTERFACE
   address_t a = 0;
 
   /* have we stored a program? */
@@ -1667,15 +1852,16 @@ void eload() {
 
 /* autorun something from EEPROM or a filesystem */
 char autorun() {
-
+#ifdef EEPROMMEMINTERFACE
   /* autorun from EEPROM if there is an EEPROM flagged for autorun */
   if (elength() > 0 && eread(0) == 1) { /* autorun from the EEPROM */
     top = getaddress(1, beread);
     st = SERUN;
     return 1; /* EEPROM autorun overrules filesystem autorun */
   }
+#endif
 
-  /* autorun from a given command line argument, if we have one */
+/* autorun from a given command line argument, if we have one */
 #ifdef HASARGS
   if (bargc > 1 && ifileopen(bargv[1])) {
     xload(bargv[1]);
@@ -1894,6 +2080,7 @@ address_t bfind(name_t* name) {
 /* reimplementation bfree with name interface */
 address_t bfree(name_t* name) {
   address_t b;
+  address_t i;
 
   if (DEBUG) {
     outsc("*** bfree called for ");
@@ -1916,7 +2103,7 @@ address_t bfree(name_t* name) {
   }
 
   /* clear the entire memory area */
-  for (address_t i = himem; i <= b + bfind_object.size - 1; i++) memwrite2(i, 0);
+  for (i = himem; i <= b + bfind_object.size - 1; i++) memwrite2(i, 0);
 
   /* set the number of variables to the new value */
   himem = b + bfind_object.size - 1;
@@ -1963,12 +2150,16 @@ number_t getvar(name_t *name) {
         return id;
       case 'O':
         return od;
+#ifndef STM32
       case 'T':
         return millis();
+#endif
       case 'C':
         if (availch()) return inch(); else return 0;
+#ifdef EEPROMMEMINTERFACE
       case 'E':
         return elength() / numsize;
+#endif
       case 0:
         return (himem - top) / numsize;
       case 'R':
@@ -2123,8 +2314,17 @@ void clrvars() {
   for (i = 0; i < VARSIZE; i++) vars[i] = 0;
 #endif
 
-  /* then set the entire mem area to zero */
-  for (i = himem; i < memsize; i++) memwrite2(i, 0);
+  /* then set the entire mem area to zero - this loop can cover the
+     whole heap (up to MEMSIZE), which at ~7 ARM cycles/byte would
+     otherwise dump hundreds of thousands of un-budgeted cycles into a
+     single overblank window. Each memwrite2() here compiles down to a
+     single byte store, so yield roughly every 128 bytes (~900 cycles)
+     to fold this into the normal render-cadence budget like any other
+     statement. */
+  for (i = himem; i < memsize; i++) {
+    memwrite2(i, 0);
+    if ((i & 0x7F) == 0) byield();
+  }
 
   /* reset the heap start*/
   himem = memsize;
@@ -2151,6 +2351,7 @@ void clrvars() {
    This way, types in runtime.c can be changed without changing the
    BASIC interpreter code.
 */
+#ifdef EEPROMMEMINTERFACE
 mem_t beread(address_t a) {
   return eread(a);
 }
@@ -2158,7 +2359,7 @@ mem_t beread(address_t a) {
 void beupdate(address_t a, mem_t v) {
   eupdate(a, v);
 }
-
+#endif
 
 /* a generic memory reader for numbers  */
 number_t getnumber(address_t m, memreader_t f) {
@@ -2369,6 +2570,7 @@ void outname(name_t* name) {
 
 */
 address_t createarray(name_t* variable, address_t i, address_t j) {
+  address_t a;
 
   /* if we want to me MS compatible, the array ranges from 0-n */
   if (msarraylimits) {
@@ -2389,7 +2591,7 @@ address_t createarray(name_t* variable, address_t i, address_t j) {
 #else
 
   /* allocate the array space */
-  address_t a = bmalloc(variable, i * j);
+  a = bmalloc(variable, i * j);
 
   /* store the dimension of the array at the beginning of the array area */
   setaddress(a + i * j * numsize, memwrite2, j);
@@ -2426,6 +2628,7 @@ void array(lhsobject_t* object, mem_t getset, number_t* value) {
   if (object->name.c[0] == '@') {
     switch (object->name.c[1]) {
       /* @E ranges from 1 to the end of the EEPROM minus the header */
+#ifdef EEPROMMEMINTERFACE
       case 'E':
         h = elength() / numsize;
         a = elength() - numsize * object->i;
@@ -2436,6 +2639,7 @@ void array(lhsobject_t* object, mem_t getset, number_t* value) {
         if (getset == 'g') *value = getnumber(a, beread);
         else if (getset == 's') setnumber(a, beupdate, *value);
         return;
+#endif
 #if defined(DISPLAYDRIVER) && defined(DISPLAYCANSCROLL)
       case 'D':
         if (getset == 'g') *value = dspget(object->i - 1);
@@ -2631,7 +2835,7 @@ void storecstring(address_t ax, address_t s, char* b) {
 
 /* length of a c string up to a limit l */
 address_t cstringlength(char* c, address_t l) {
-  address_t a;
+  address_t a = 0;
 
   while (a < l && c[a] != 0) a++;
   return a;
@@ -2662,7 +2866,7 @@ void getstring(string_t* strp, name_t* name, address_t b, address_t j) {
       case 0:
         strp->ir = ibuffer + b;
         strp->length = ibuffer[0];
-        strp->strdim = BUFSIZ - 2;
+        strp->strdim = BUFSIZE - 2;
         return;
       default:
         error(EVARIABLE);
@@ -2981,7 +3185,7 @@ char* getkeyword(address_t i) {
 
 /* messages are read from the message array */
 char* getmessage(char i) {
-  if (i >= sizeof(message) || i < 0) return 0;
+  if (i >= messagesize || i < 0) return 0;
 #ifndef ARDUINOPROGMEM
   return (char *) message[i];
 #else
@@ -2992,7 +3196,7 @@ char* getmessage(char i) {
 
 /* tokens read here are token_t constructed from multi byte sequences */
 token_t gettokenvalue(address_t i) {
-  if (i >= sizeof(tokens)) return 0;
+  if (i >= tokensize || i < 0) return 0;
 #ifndef ARDUINOPROGMEM
   return tokens[i];
 #else
@@ -4324,11 +4528,15 @@ void storetoken() {
 */
 #ifndef USEMEMINTERFACE
 mem_t memread(address_t a) {
+#ifdef EEPROMMEMINTERFACE
   if (st != SERUN) {
     return mem[a];
   } else {
     return eread(a + eheadersize);
   }
+#else
+  return mem[a];
+#endif
 }
 
 mem_t memread2(address_t a) {
@@ -4469,7 +4677,7 @@ typedef struct {
   address_t l;
   address_t h;
 } linecacheentry;
-linecacheentry linecache[LINECACHESIZE];
+linecacheentry linecache[LINECACHESIZE] CCMRAM_SPARING;
 unsigned char linecachehere = 0;
 
 void clrlinecache() {
@@ -4909,17 +5117,17 @@ void xpeek() {
   /* get the argument from the stack because this is a function only */
   a = pop();
 
-  /* the memory and EEPROM range */
-#ifdef STM32 
+#ifdef STM32
   if (a >= 0 && a <= memsize)
-    push(vcs_memread2(a));
-  else if (a < 0 && -a <= memsize)
-    push(eread(-a - 1));
+    /* mem_t is signed - reinterpret as unsigned so PEEK returns 0..255
+       like classic 8 bit BASICs, not -128..127 */
+    push((uint8_t)vcs_memread2(a));
 #else
+  /* the memory and EEPROM range */
   if (a >= 0 && a <= memsize)
-    push(memread2(a));
+    push((uint8_t)memread2(a));
   else if (a < 0 && -a <= elength())
-    push(eread(-a - 1));
+    push((uint8_t)eread(-a - 1));
 #endif
   else {
     error(EORANGE);
@@ -5913,6 +6121,7 @@ void factorinstr() {
 #endif
 
 /* helpers of factor - the NETSTAT command */
+#ifdef HASIOT
 void factornetstat() {
   address_t x = 0;
 
@@ -5920,8 +6129,10 @@ void factornetstat() {
   if (mqttstate() == 0) x += 2;
   push(x);
 }
+#endif
 
 /* helpers of factor - the ASC command, really not needed but for completeness */
+#ifdef HASMSSTRINGS
 void factorasc() {
 #ifdef HASAPPLE1
   string_t s;
@@ -5962,6 +6173,7 @@ void factorasc() {
   push(0);
 #endif
 }
+#endif
 
 void factor() {
   if (DEBUG) bdebug("factor\n");
@@ -6939,7 +7151,9 @@ again:
         /* if we have no buffer or are at the end, read it and set cursor k to the beginning */
         if (k == 0 || (address_t) buffer[0] < k) {
           if (prompt) showprompt();
+          inputActive = true;
           (void) ins(buffer, bufsize);
+          inputActive = false;
           k = 1;
         }
 
@@ -7009,6 +7223,7 @@ again:
 
         /* now read the string inplace */
         if (prompt) showprompt();
+        inputActive = true;
 #ifndef USEMEMINTERFACE
         newlength = ins(s.ir - 1, maxlen);
 #else
@@ -7023,6 +7238,7 @@ again:
           }
         }
 #endif
+        inputActive = false;
 
         /* if we have a string variable, we need to copy the buffer to the string */
 
@@ -7180,7 +7396,7 @@ processelse:
 
 /* if else is encountered in the statement line, the rest of the code is skipped
  		as else code execution is triggered in the xif function */
-#ifdef HASSTEFANSEXT
+#if defined(HASSTEFANSEXT) || defined(STM32)
 void xelse() {
   mem_t nl = 0;
 
@@ -7658,6 +7874,7 @@ void xlist() {
    length as some platforms have a signed char and some
    don't.
 */
+#ifdef HASEDITOR
 void xedit() {
   mem_t ood = od;
   address_t line;
@@ -7740,7 +7957,7 @@ undo: /* this is the undo point */
         case 'a': /* append multiple characters at the end of the line */
           l = (unsigned char)ibuffer[0] + 1;
         case 'i': /* insert multiple characters at the cursor position */
-          if (i - k + (unsigned char)ibuffer[0] < BUFSIZ) {
+          if (i - k + (unsigned char)ibuffer[0] < BUFSIZE) {
             for (j = i - k + (unsigned char)ibuffer[0]; j >= l; j--) {
               ibuffer[j + i - k] = ibuffer[j];
               if (j <= l + i - k) ibuffer[j] = sbuffer[k + 1 + (j - l)];
@@ -7795,7 +8012,7 @@ endnosave:
   bi = ibuffer + 1;
   nexttoken();
 }
-
+#endif
 /*
  	RUN and CONTINUE are the same function
 */
@@ -7842,7 +8059,9 @@ void xrun() {
   statement();
   st = SINT;
   /* flush the EEPROM when changing to interactive mode */
+#ifdef EEPROMMEMINTERFACE
   eflush();
+#endif
 
   /* if called from command line with file arg - exit after run */
 #ifdef HASARGS
@@ -7854,6 +8073,7 @@ void xrun() {
    a simple help function for the help command, will be extended to
    a more sophisticated help system in the future
 */
+#ifdef HASHELP
 void xhelp() {
   int i;
   nexttoken();
@@ -7875,7 +8095,7 @@ void xhelp() {
     nexttoken();
   }
 }
-
+#endif
 /* 
  * The camera control command for ESP32 cameras and similar MCU cams
  * currently only a stub, no functionality, just to shape the syntax
@@ -7886,15 +8106,15 @@ void xcam() {
   switch(token) {
     case TGET: /* get an image from the camera to the buffer */
       nexttoken();
-//      cameraget();
+      cameraget();
       break;
     case TSET: /* set the camera parameters */
       nexttoken();
-//      cameraset();
+      cameraset();
       break;
     case TSAVE: /* save the image to the filesystem */
       nexttoken();
-//      camerasave();
+      camerasave();
       break;
   }
   while(!termsymbol()) nexttoken();
@@ -7945,7 +8165,7 @@ void xnew() {
   /* reset the state of the interpreter */
   resetbasicstate();
 
-
+  
   if (DEBUG) {
     outsc("** clearing memory ");
     outnumber(memsize);
@@ -8183,7 +8403,7 @@ void xpoke() {
   a = pop(); /* the address */
 
   /* catch memsize here because memwrite doesn't do it */
-#ifdef STM32 
+#ifdef STM32
   if (a >= 0 && a <= memsize)
     vcs_memwrite2(a, v);
   else if (a < 0 && a >= -memsize)
@@ -8282,6 +8502,7 @@ void xlocate() {
 /*
  	DUMP - memory dump program
 */
+#ifdef HASSTEFANSEXT
 void xdump() {
   address_t a, x;
   char eflag = 0;
@@ -8348,6 +8569,7 @@ void dumpmem(address_t r, address_t b, char eflag) {
     outsc("himem: "); outnumber(himem); outcr();
   }
 }
+#endif
 
 /*
  	Creates a C string from a BASIC string after reading a BASIC string.
@@ -8367,13 +8589,16 @@ void stringtobuffer(char *buffer, string_t* s) {
 }
 
 /* helper for the memintercase code */
+#ifdef USEMEMINTERFACE
 void getstringtobuffer(string_t* strp, char *buffer, stringlength_t maxlen) {
   stringlength_t i;
 
   for (i = 0; i < strp->length && i < maxlen; i++) buffer[i] = memread2(strp->address + i);
   strp->ir = buffer;
 }
+#endif
 
+#if defined(FILESYSTEMDRIVER)
 /* get a file argument */
 void getfilename(char *buffer, char d) {
   index_t s;
@@ -8463,7 +8688,6 @@ char* getfilename2(char d) {
   }
 }
 
-#if defined(FILESYSTEMDRIVER)
 /*
  	SAVE a file either to disk or to EEPROM
 */
@@ -8616,7 +8840,7 @@ void xload(const char* f) {
     }
   }
 }
-#else
+#elif defined(EEPROMMEMINTERFACE)
 /*
  	SAVE a file to EEPROM - minimal version for small Arduinos
 */
@@ -8633,6 +8857,7 @@ void xload(const char* f) {
 }
 #endif
 
+#ifdef HASSTEFANSEXT
 /*
  	GET just one character from input
 */
@@ -8965,6 +9190,7 @@ void xnetstat() {
 #endif
   nexttoken();
 }
+#endif
 
 /*
    The arduino io functions.
@@ -8975,7 +9201,7 @@ void xnetstat() {
     rtaread and rtdread are wrappers coming from runtime
     This is done for portability for raspberry pi and other systems
 */
-
+#ifdef HASARDUINOIO
 void xaread() {
   push(aread(popaddress()));
 }
@@ -9030,7 +9256,7 @@ void xpinm() {
   if (!USELONGJUMP && er) return;
   pinm(y, x);
 }
-
+#endif
 /*
    DELAY in milliseconds
 
@@ -9038,12 +9264,14 @@ void xpinm() {
    handles all the yielding and timing functions
 
 */
+#ifdef HASSTEFANSEXT
 void xdelay() {
   nexttoken();
   parsenarguments(1);
   if (!USELONGJUMP && er) return;
   bdelay(pop());
 }
+#endif
 
 /* tone if the platform has it -> BASIC command PLAY */
 #ifdef HASTONE
@@ -9830,6 +10058,8 @@ void xcatalog() {
     rootfileclose();
   }
   rootclose();
+#elif defined(STM32)
+  serialload(0);
 #else
   nexttoken();
 #endif
@@ -9838,6 +10068,7 @@ void xcatalog() {
 /*
  	DELETE a file
 */
+#ifdef HASFILEIO
 void xdelete() {
 #if defined(FILESYSTEMDRIVER)
   char filename[SBUFSIZE];
@@ -9851,6 +10082,7 @@ void xdelete() {
   nexttoken();
 #endif
 }
+#endif
 
 /*
  	OPEN a file or I/O stream - very raw mix of different functions
@@ -11139,8 +11371,12 @@ void statement() {
       case TEND:		/* return here because new input is needed, end as a block end is handles elsewhere */
         *ibuffer = 0;	/* clear ibuffer - this is a hack */
         st = SINT;		/* switch to interactive mode */
+#ifdef EEPROMMEMINTERFACE
         eflush(); 	/* if there is an EEPROM dummy, flush it here (protects flash storage!) */
+#endif
+#ifdef FILESYSTEMDRIVER
         ofileclose();
+#endif
         nexttoken();
         if (token == TSTOP) {
           restartsystem();
@@ -11186,7 +11422,7 @@ void statement() {
         xsave();
         break;
       case TLOAD:
-        xload(0);
+        xload();
         if (st == SINT) return; /* interactive load doesn't like break as the ibuffer is messed up; */
         else break;
 #ifdef HASSTEFANSEXT
@@ -11205,6 +11441,7 @@ void statement() {
       case TNETSTAT:
         xnetstat();
         break;
+#endif
       case TCLS:
         ax = od;
         /* if we have a display it is the default for CLS */
@@ -11215,6 +11452,7 @@ void statement() {
         od = ax;
         nexttoken();
         break;
+#ifdef HASSTEFANSEXT
       case TLOCATE:
         xlocate();
         break;
@@ -11251,10 +11489,13 @@ void statement() {
 #endif
 #endif
         /* BASIC DOS function */
-#ifdef HASFILEIO
       case TCATALOG:
         xcatalog();
         break;
+      case TFTPCONN:
+        xcatalog(); // connection 
+        break;
+#ifdef HASFILEIO
       case TDELETE:
         xdelete();
         break;
@@ -11326,11 +11567,11 @@ void statement() {
         break;
 #endif
 #endif
-#ifdef HASSTEFANSEXT
+//#ifdef HASSTEFANSEXT
       case TELSE:
         xelse();
         break;
-#endif
+//#endif
 #ifdef HASDARKARTS
       case TEVAL:
         xeval();
@@ -11561,12 +11802,15 @@ errorhandler:
 */
 void displaybanner() {
   int i;
-  printmessage(MGREET); outspc();
+  printmessage(MGREET);// outspc();
+#ifdef HASERRORMSG
   printmessage(EOUTOFMEMORY); outspc();
   if (memsize < maxnum) outnumber(memsize + 1); else {
     outnumber(memsize / 1024 + 1);
     outch('k');
   }
+#endif
+#ifdef EEPROMMEMINTERFACE
   outspc();
 #ifdef HASERRORHANDLING
   printmessage(EEEPROM);
@@ -11574,6 +11818,7 @@ void displaybanner() {
 #endif
   outnumber(elength());
   outcr();
+#endif
 #ifdef HASHELP
   outsc(getmessage(MLANGSET));
   outsc(getmessage(MBASICLANGSET)); outcr();
@@ -11593,7 +11838,9 @@ void displaybanner() {
 void setup() {
 
   /* start measureing time */
-//  timeinit();
+#ifdef HASTIME
+  timeinit();
+#endif
 
   /* initialize the event system */
 #ifdef HASEVENTS
@@ -11601,10 +11848,7 @@ void setup() {
 #endif
 
   /* init all io functions */
-//  ioinit();
-  idd = ISERIAL;
-  odd = OSERIAL;
-
+  ioinit();
 #ifdef FILESYSTEMDRIVER
   // if (fsstat(1) == 1 && fsstat(2) > 0) outsc("Filesystem started\n");
 #endif
@@ -11659,6 +11903,17 @@ void setup() {
   		the interpreter to got into autorun once loop is reached */
   if (!autorun()) displaybanner();
 
+  /* derive the render-cadence token budget from the actual clock speed
+     in mainArgs[MP_CLOCK_HZ] - divisor tuned empirically on real
+     hardware (stable up to ~356 tokens at 216MHz; 650000 gives ~332,
+     a safe margin below that). Correct the known Gopher2600 "70"
+     units bug; stored POKE/PEEK-able so it can be tuned live. */
+  {
+    uint32_t clk = g_mainArgs[MP_CLOCK_HZ];
+    tokenBudget = clk / 650000UL;
+    if (tokenBudget < 1) tokenBudget = 10;
+  }
+
   /* activate the BREAKPIN */
   breakpinbegin();
 }
@@ -11690,6 +11945,14 @@ void loop() {
   iodefaults();
   form = 0;
 
+  /* every return to interactive mode gets a READY, just like classic
+     Atari BASIC - at boot (loop()'s first call falls straight through
+     to here), and after RUN or any direct command completes. Not,
+     however, after just storing a program line (a bare line number) -
+     classic BASIC stays silent there too. */
+  static bool suppressReady = false;
+  if (!suppressReady) outsc("READY\n");
+
   /* the prompt and the input request */
   printmessage(MPROMPT);
   (void) ins(ibuffer, BUFSIZE - 2);
@@ -11702,6 +11965,7 @@ void loop() {
   if (token == NUMBER) {
     ax = x;
     storeline();
+    suppressReady = true;
 
     /* on an EEPROM system we store top after each succesful line insert */
 #ifdef EEPROMMEMINTERFACE
@@ -11711,6 +11975,7 @@ void loop() {
     /* st=SINT; */
     statement();
     st = SINT;
+    suppressReady = false;
   }
 
   /* here, at last, all errors need to be catched and back to interactive input*/
@@ -11774,6 +12039,141 @@ int main(int argc, char* argv[]) {
    - Avoid allocating a lot of memory in bloop().
 */
 
+void send_uart_command(const unsigned char* pbuffer){
+  uint8_t  c = 0;
+  while( (vcsRead4(SWCHA) != 0xff) ){
+    vcsJmp3();
+  } // waiting for SWCHA ready
+
+  vcsWrite6(SWACNT, 0b00000001);
+  vcsWrite6(SWCHA, 0xff);
+
+  while (*pbuffer != 0){
+    vcsWrite6(SWCHA, 0); // RX start-bit low
+    vcsSleep(117);
+    c = (uint8_t)*pbuffer++;
+    vcsWrite6(SWCHA, c);
+    vcsSleep(117);
+    c = (c >> 1);
+    vcsWrite6(SWCHA, c);
+    vcsSleep(116);
+    c = (c >> 1);
+    vcsWrite6(SWCHA, c);
+    vcsSleep(117);
+    c = (c >> 1);
+    vcsWrite6(SWCHA, c);
+    vcsSleep(117);
+    c = (c >> 1);
+    vcsWrite6(SWCHA, c);
+    vcsSleep(117);
+    c = (c >> 1);
+    vcsWrite6(SWCHA, c);
+    vcsSleep(116);
+    c = (c >> 1);
+    vcsWrite6(SWCHA, c);
+    vcsSleep(117);
+    c = (c >> 1);
+    vcsWrite6(SWCHA, c);
+    vcsSleep(117);
+    vcsWrite6(SWCHA, 1); //RX stop-bit high
+    vcsSleep(117);
+  }
+  vcsWrite6(SWACNT, 0b00000000);
+}
+
+
+/*
+ 	LOAD a file from RIOT/TIA UART link 
+*/
+void serialload(unsigned char flag){
+  uint8_t i = 1, c = 0;
+  uint8_t bk = 0x04;
+
+  unsigned char *p = &ibuffer[1];
+  while (*p) p++;
+  *p++ = '\n';
+  *p = '\0';
+
+  outsc(&ibuffer[1]);
+  vcsEndOverblank();
+  vcsWrite5(COLUBK, 0xa0);
+  vcsWrite5(VBLANK, 0); // disable blanking
+
+  send_uart_command(&ibuffer[1]);
+
+  while(! (vcsRead4(INPT5) & 0x80) ){
+    vcsJmp3();
+  } // waiting for start bit getting high again
+
+  vcsWrite5(COLUBK, bk);
+
+  while(c != 4 && i<256){
+    while(vcsRead4(INPT5) & 0x80 ){
+      vcsJmp3();
+    } // wait for start bit (RX low)
+    vcsSleep(140); // 6
+    vcsWrite5(COLUBK, bk);
+    bk += 0x10;
+
+    c = vcsRead4(INPT5);
+    vcsSleep(119);
+    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
+    vcsSleep(118);
+    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
+    vcsSleep(119);
+    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
+    vcsSleep(119);
+    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
+    vcsSleep(119);
+    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
+    vcsSleep(118);
+    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
+    vcsSleep(119);
+    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
+    vcsNop2();
+    if(c == '\n' || c == '\r' || c == 4){
+      vcsSleep(201);
+      if(flag){
+        ibuffer[i] = '\0';
+        ibuffer[0] = i;
+        bi = ibuffer+1;
+        nexttoken();
+        /* a number triggers the line storage, anything else is executed */
+        if (token == NUMBER) {
+          ax = x;
+          storeline();
+        }
+      }else{
+        ibuffer[i++] = '\n';
+        ibuffer[i] = '\0';
+        outsc(&ibuffer[1]);
+      }
+
+      if(c != 4){
+        i=1;
+        send_uart_command("ACK\n");
+      }
+    } else {
+      vcsSleep(99);
+      ibuffer[i++] = c;
+    }
+  }
+
+  vcsWrite5(VBLANK, 2); // enable blanking
+  vcsStartOverblank();
+  nexttoken();
+}
+
+void xload() {
+  serialload(1);
+}
+
+void xsave() {
+  /* serial SAVE over the KeyPortari link is not implemented yet */
+  nexttoken();
+  error(EUNKNOWN);
+}
+
 void bsetup() {
   /* put your setup code here, to run once: */
 
@@ -11785,21 +12185,23 @@ void bloop() {
   if(tokenCounter--)
     return;
 
+  cursor_update();
   vcsEndOverblank();
 
   renderDisplayFrame();
-  tokenCounter = 10;
+  frameCounter++;
+  tokenCounter = tokenBudget;
 
 
   // we are in VBLANK after renderDisplay
   // read controller and switch values from RIOT
 
   // RIOT shadow
-  riotShadowRAM[0] = vcsRead4(SWCHA);
+  riotShadowRAM[SWCHA & 0x1F] = vcsRead4(SWCHA);
   vcsNop2();
-  riotShadowRAM[2] = vcsRead4(SWCHB);
+  riotShadowRAM[SWCHB & 0x1F] = vcsRead4(SWCHB);
   vcsNop2();
-  riotShadowRAM[4] = vcsRead4(INTIM);
+  riotShadowRAM[INTIM & 0x1F] = vcsRead4(INTIM);
   vcsNop2();
 
   // TIA shadow
@@ -11832,10 +12234,10 @@ void bloop() {
   vcsStartOverblank();
   tiaShadowRAM[EVEN_FRAME] = tiaShadowRAM[EVEN_FRAME] ? 0:1;
 
-  if(riotShadowRAM[0] != 0b11111111 && !key_restrainer){ // Key pressed
-    active_char = (char)riotShadowRAM[0];
+  if(riotShadowRAM[SWCHA & 0x1F] != 0b11111111 && !key_restrainer){ // Key pressed
+    active_char = (char)riotShadowRAM[SWCHA & 0x1F];
     key_restrainer = true;
-  }else if(riotShadowRAM[0] == 0b11111111 ){
+  }else if(riotShadowRAM[SWCHA & 0x1F] == 0b11111111 ){
     key_restrainer = false;
   }
 }
