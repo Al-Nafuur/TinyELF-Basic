@@ -78,5 +78,5 @@ They need TinyELF Basic v0.16 or newer (`DATA`/`READ`, `MILLIS`, `DELAY`). All o
 
 The games listed in the table are the ports by Stefan Lenz from the examples of his BASIC interpreter
 (<https://github.com/slviajero/tinybasic>, folder `examples/14games`), renamed to 8.3 file names for TinyELF.
-They are distributed under his BSD 3-Clause licence, see [`LICENSE-tinybasic.txt`](LICENSE-tinybasic.txt).
+They are distributed under his BSD 3-Clause licence, see [`LICENSE-tinybasic.txt`](../LICENSE-tinybasic.txt).
 The original games were published by Creative Computing.
