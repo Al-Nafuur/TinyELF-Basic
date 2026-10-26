@@ -74,9 +74,17 @@ They need TinyELF Basic v0.16 or newer (`DATA`/`READ`, `MILLIS`, `DELAY`). All o
 
 `TinyAdv1.lst` – *The Old Castle*, a small text adventure written for TinyELF Basic.
 
+`Dungeon.lst` – *Dungeons of Ekileugor*, a small roguelike: explore the dungeon, fight snakes, collect gold and potions
+and find the stairs down. Keys: `I` `J` `K` `L` or the cursor keys move, `R` rests, `Q` drinks a potion, `X` ends the game.
+It uses the full 36-column screen and needs TinyELF Basic v0.20 or newer. Tested on real hardware.
+
 ## Credits and licence
 
 The games listed in the table are the ports by Stefan Lenz from the examples of his BASIC interpreter
 (<https://github.com/slviajero/tinybasic>, folder `examples/14games`), renamed to 8.3 file names for TinyELF.
 They are distributed under his BSD 3-Clause licence, see [`LICENSE-tinybasic.txt`](../LICENSE-tinybasic.txt).
 The original games were published by Creative Computing.
+
+`Dungeon.lst` is a TinyELF Basic port of *Dungeons of Ekileugor* by Chris Pressey, Cat's Eye Technologies
+(<https://git.catseye.tc/Dungeons-of-Ekileugor/>), originally written for the Commodore VIC-20.
+It is distributed under the original BSD 3-Clause licence, see [`LICENSE-ekileugor.txt`](../LICENSE-ekileugor.txt).
