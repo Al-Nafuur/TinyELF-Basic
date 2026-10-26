@@ -78,6 +78,21 @@ They need TinyELF Basic v0.16 or newer (`DATA`/`READ`, `MILLIS`, `DELAY`). All o
 and find the stairs down. Keys: `I` `J` `K` `L` or the cursor keys move, `R` rests, `Q` drinks a potion, `X` ends the game.
 It uses the full 36-column screen and needs TinyELF Basic v0.20 or newer. Tested on real hardware.
 
+| On the map | Means |
+|------------|-------|
+| stick figure | you |
+| solid blocks | walls |
+| dots | rooms you haven't entered yet |
+| `s` | a snake |
+| `$` | gold |
+| bottle | a potion (`Q` drinks one) |
+| chest | gold or a potion, but it may be locked or trapped |
+| `^` | a dart trap |
+| `>` | stairs down to the next level |
+
+The game draws its own characters for you, the walls, the potion and the chest. When you quit with `X`,
+it restores the normal character set.
+
 ## Credits and licence
 
 The games listed in the table are the ports by Stefan Lenz from the examples of his BASIC interpreter
