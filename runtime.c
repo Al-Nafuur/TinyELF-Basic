@@ -2504,13 +2504,10 @@ uint8_t sdcatalognext(uint32_t *pos, char *namebuf, uint32_t *size) {
   char name8[TINYELF_NAME_LEN], ext3[TINYELF_EXT_LEN];
   uint8_t first = (*pos == 0);
 
-  /* See the COLUBK-ordering note that used to live here (project memory
-     has the full story: a real hardware boot crash from stretching the
-     gap between two vcsLib calls across the caller's printing). Kept
-     simple here since tinyelf_dir_next() itself does no vcsLib calls at
-     all (unlike the old eedir_scan_next(), it doesn't need the
-     precharge/progress writes either - each call is one fixed-size,
-     byte-addressed directory read, not an open-ended scan). */
+  /* COLUBK progress write at the start of the resumed call, after the
+     caller's printing - see sdcatalognext()'s comment in i2c_savekey.h.
+     Each tinyelf_dir_next() call is one fixed-size, byte-addressed
+     directory read, not an open-ended scan. */
   if (!first) {
     vcsWrite5(COLUBK, (uint8_t)(0xa0 + ((*pos >> 2) & 0x0f))); /* visible progress */
   }
@@ -2524,9 +2521,9 @@ uint8_t sdcatalognext(uint32_t *pos, char *namebuf, uint32_t *size) {
   }
 
   /* Reassemble "NAME.EXT", trimmed - NOT strncpy()/memcpy() (see
-     i2c_savekey.h's sdcatalognext() history for why: real libc string
+     sdcatalognext()'s comment in i2c_savekey.h: real libc string
      functions aren't on this ELF loader's resolved-symbol whitelist and
-     cause an immediate boot crash). EEDIR_MAX_FILENAME is 12 (8+1+3) so
+     cause an immediate boot crash). SD_FILENAME_MAX is 12 (8+1+3) so
      this always fits main.c's namebuf. */
   {
     uint8_t i, k = 0;

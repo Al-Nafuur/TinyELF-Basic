@@ -21,9 +21,7 @@
    time for this (confirmed directly by the user, who designed this
    mechanism) - only vcsNop2n(x) does, by driving the data bus to a NOP
    opcode for the injected 6502 to chew on, buying x*2 real 6502 cycles of
-   safe ARM time. This is the same mechanism eedir_scan_next() in
-   i2c_savekey.c already uses (there, vcsNop2n(10) ahead of an ~11-byte
-   filename compare).
+   safe ARM time.
 
    First attempt here used one big vcsNop2n() precharge before each
    bounded chunk of ARM-only work (a memset, header field assignments, a
@@ -233,8 +231,8 @@ uint8_t tinyelf_format(uint8_t drive, uint32_t capacityOverride) {
   vcsStartOverblank();
   if (!ok) return 0;
 
-  /* Capacity: auto (addressCount * 65536) for a multi-block drive, or the
-     old i2cEepromSize-matching 32768 default for a single-block drive
+  /* Capacity: auto (addressCount * 65536) for a multi-block drive, or a
+     32768 (24LC256) default for a single-block drive
      (genuinely capacity-ambiguous from the scan alone - confirmed via the
      SaveKey-Manager sibling project, see the project plan) when no
      explicit override is given; an explicit override is only bounds-
@@ -332,8 +330,8 @@ uint8_t tinyelf_mount(uint8_t drive) {
   tinyelf_drive_t dr;
 
   /* Cleared up front, not just left alone on failure - L is a static, so
-     without this a failed mount (e.g. the disk still has the old
-     eedir_.../eedisk_... format's header, or isn't formatted at all)
+     without this a failed mount (e.g. the disk has an older, pre-TinyELF
+     format's header, or isn't formatted at all)
      could leave L.mounted stuck at 1 from an earlier successful
      mount/format this session, and every other tinyelf_* call would then
      silently keep using that stale layout instead of correctly failing -
@@ -420,9 +418,8 @@ static uint8_t dir_write(uint32_t slot, const uint8_t *entry16) {
 
 static uint8_t name_matches(const uint8_t *entry16, const char *name8, const char *ext3) {
   uint8_t i;
-  /* ~11-byte compare, no vcsLib call in the loops themselves - same shape
-     as eedir_scan_next()'s filename compare in i2c_savekey.c, which needed
-     exactly this precharge for the same reason. Only reachable once a
+  /* ~11-byte compare, no vcsLib call in the loops themselves, so it
+     needs this precharge (see the comment at the top). Only reachable once a
      directory has an in-use entry to compare against, which FORMAT/SAVE's
      testing on an all-never-used fresh directory never exercised - found
      via a real hardware crash on the first LOAD against a saved file. */

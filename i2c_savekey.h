@@ -6,8 +6,9 @@
  * Thomas Jentzsch 2006/2008) to run as ARM-side vcsLib bus-stuffing instead
  * of injected 6507 machine code.
  *
- * Provides a page-aware EEPROM read/write API, plus sys_read()/sys_write()
- * for the UTFS filesystem (see utfs.h) to sit on top of.
+ * Provides the page-aware EEPROM read/write API that tinyelf_fs.c sits on
+ * top of, and declares the sd*() storage commands (implemented in
+ * runtime.c) that main.c's SAVE/LOAD/FORMAT/CATALOG/LIST/ENTER/DELETE use.
  */
 #ifndef I2C_SAVEKEY_H
 #define I2C_SAVEKEY_H
@@ -26,9 +27,8 @@
 #define I2C_EEPROM_PAGE_SIZE  64u
 #endif
 
-/* Maximum retries for a whole read/write operation (eedisk_header_read/
-   write, eedir_scan_next, eedir_append, FORMAT's blank loop) before
-   giving up. The *first* I2C op of a session used to need this to ride
+/* Maximum retries for a whole read/write operation (read_retried()/
+   write_retried() in tinyelf_fs.c) before giving up. The *first* I2C op of a session used to need this to ride
    out KeyPortari holding a keypress value on the bus - fixed properly now
    via the KeyPortari chip-enable line (see KEYPORTARI_CE_MASK in
    i2c_savekey.c), so this is rarely the reason for a retry anymore.
@@ -65,8 +65,8 @@
 /* Defined in main.c (needs renderDisplayFrame()) - leaves the I2C
    bus-stuffing session for a few normal frames and re-enters it, meant to
    be called between retry attempts of a single write inside a long
-   operation (FORMAT's page-by-page blanking, eedir_append()'s header/data
-   writes), not just once at the start of a command. See its definition
+   operation (write_retried() in tinyelf_fs.c), not just once at the start
+   of a command. See its definition
    for the reasoning (a disturbance recurring *during* a long I2C session,
    not just from the keypress that started it). */
 void i2c_retry_pause(void);
@@ -99,91 +99,9 @@ uint32_t i2c_eeprom_write(uint8_t devaddr7, uint16_t memaddr, const void *data, 
    single sequential read. Returns the number of bytes actually read. */
 uint32_t i2c_eeprom_read(uint8_t devaddr7, uint16_t memaddr, void *data, uint32_t len);
 
-/* capacity in bytes of the currently configured EEPROM. Defaults to the
-   24LC256's 32768 bytes (see i2c_savekey.c), but should normally be kept
-   in sync with the on-disk disk header (see eedisk_header_read() below)
-   rather than relied on directly - it's a RAM variable, reset to the
-   default on every reboot/reload, so it's stale until something reads the
-   disk header. Used by eedir_append() to refuse writes that would run off
-   the end of the chip. */
-extern uint32_t i2cEepromSize;
-
-/* Disk header, written once by FORMAT at address 0 and read back by
-   eedisk_header_read() - this is what lets SAVE/LOAD/CATALOG know the
-   real capacity of whatever chip is actually attached, surviving a
-   reboot, instead of trusting i2cEepromSize's default. Uses its own
-   identifier (EEDISK_IDENTIFIER), deliberately different from a file
-   entry's (EEDIR_IDENTIFIER in i2c_savekey.c / UTFS's 0x1984), so the two
-   can never be confused when scanning. The file directory (see below)
-   starts right after it, at EEDIR_START. */
-#define EEDISK_HEADER_SIZE 8u
-#define EEDIR_START EEDISK_HEADER_SIZE
-
-/* Reads the disk header at address 0; on success updates i2cEepromSize
-   from it and returns 1. Returns 0 (leaving i2cEepromSize unchanged) if
-   there's no valid disk header yet - i.e. FORMAT has never been run on
-   this chip. */
-uint8_t eedisk_header_read(void);
-
-/* Writes the disk header recording 'capacity' bytes, called by FORMAT
-   (xformat() in main.c) - does not touch anything past the header itself,
-   FORMAT's caller still has to blank the rest. Returns 1 on success, 0 if
-   the write didn't fully go through (caller should retry). */
-uint8_t eedisk_header_write(uint32_t capacity);
-
-/* Simple append-only directory of named files on the EEPROM, starting at
-   EEDIR_START, using the on-disk header layout UTFS (utfs.c/.h) also
-   uses - 0x1984 identifier, version 1, 2-byte signature/reserved, 4-byte
-   size, 11-char name - so anything else that understands UTFS's format
-   can still read what we write here. Unlike utfs.c's own API (built
-   around a fixed, compile-time known set of save slots), this scans the
-   disk directly and supports arbitrary names discovered at runtime, which
-   is what SAVE/LOAD/CATALOG need. There is no space reclamation: SAVE
-   always appends: a later entry with the same name shadows an earlier one
-   (found first by eedir_find(), which scans for the LAST match), and
-   FORMAT is how you reclaim space.
-
-   NOTE: this constant is ALSO reused by main.c's CATALOG buffer sizing
-   for the new tinyelf_fs.c-based format (sdcatalognext() in runtime.c) -
-   bumped from 11 to 12 to fit "NAME.EXT" (8+1+3) instead of the old
-   11-char concatenated form, with zero main.c changes needed since it
-   already parameterizes its buffer/padding width off this define. */
-#define EEDIR_MAX_FILENAME 12
-
-typedef struct {
-  char name[EEDIR_MAX_FILENAME + 1];
-  uint32_t size;
-  uint32_t headerPos; /* where this entry's header starts on the EEPROM */
-  uint32_t dataPos;   /* where this entry's data starts (headerPos + 24) */
-} eedir_entry_t;
-
-/* Reads the header at 'pos'; on success (valid UTFS identifier/version)
-   fills *entry and returns the offset just past this entry's data (i.e.
-   where the next header would start). Returns 0 if 'pos' is not a valid
-   header - the end of the directory. */
-uint32_t eedir_scan_next(uint32_t pos, eedir_entry_t *entry);
-
-/* Finds the most recent entry named 'name' (case-sensitive, matches
-   EEDIR_MAX_FILENAME chars). Returns 1 and fills *entry if found, 0 if
-   not. */
-uint8_t eedir_find(const char *name, eedir_entry_t *entry);
-
-/* Returns 1 if an entry named 'name' appears again anywhere from fromPos
-   onward - i.e. whether an entry just scanned is "shadowed" by a later
-   same-named one (see the append-only/no-reclaim note above). Used by
-   CATALOG to skip printing dead entries; pass the entry's own 'next' scan
-   position (not its headerPos) as fromPos so the entry doesn't match
-   itself. */
-uint8_t eedir_superseded(const char *name, uint32_t fromPos);
-
-/* Offset just past the last valid directory entry (starting the scan from
-   EEDIR_START) - where the next eedir_append() will write. */
-uint32_t eedir_end(void);
-
-/* Appends a new header+data entry at eedir_end(). name is truncated to
-   EEDIR_MAX_FILENAME chars. Returns 1 on success, 0 if it wouldn't fit
-   within i2cEepromSize. */
-uint8_t eedir_append(const char *name, const void *data, uint32_t size);
+/* Longest file name the sd*() functions hand back: "NAME.EXT" (8+1+3).
+   CATALOG's name buffer in main.c holds SD_FILENAME_MAX + 1 bytes. */
+#define SD_FILENAME_MAX 12
 
 /* sdsave()/sddelete() result when the "En:" prefix is missing/malformed,
    the drive does not answer or is not formatted - main.c raises EEEPROM
@@ -206,8 +124,7 @@ uint8_t sddelete(const char *name);
    filling *outsize on success. Returns 0 for every current failure case
    alike (not found, a size-0 DELETE tombstone, too big for maxlen, or an
    incomplete read) - main.c raises EFILE (or sets er=EFILE silently for
-   the autoboot-quiet caller) on any 0. Fourth function moved out of
-   main.c; see project memory before adding more. */
+   the autoboot-quiet caller) on any 0. */
 uint8_t sdload(const char *name, void *data, uint32_t maxlen, uint32_t *outsize);
 
 /* FORMAT (xformat() in main.c) - drivespec is a mandatory "En:" prefix
@@ -216,8 +133,7 @@ uint8_t sdload(const char *name, void *data, uint32_t maxlen, uint32_t *outsize)
    from the drive's own I2C address-scan-derived capacity). Returns 0 if
    the drive prefix is missing/malformed, the drive isn't present, the
    size override is invalid, or a retried write was exhausted - main.c
-   raises EEEPROM on any of those. Fifth function moved out of main.c; see
-   project memory before adding more. */
+   raises EEEPROM on any of those. */
 uint8_t sdformat(const char *drivespec, uint32_t sizeOverride);
 
 /* CATALOG's scan (xcatalog() in main.c), split into an iterator so main.c
@@ -229,35 +145,22 @@ uint8_t sdformat(const char *drivespec, uint32_t sizeOverride);
    drive prefix is missing/malformed or the drive isn't present/formatted,
    so main.c can raise a real error instead of silently showing an empty
    catalog. sdcatalognext() advances *pos (start the caller's own variable at 0)
-   and fills namebuf (must be at least EEDIR_MAX_FILENAME+1 bytes) and
-   *size for the next entry CATALOG actually shows (size-0 tombstones and
-   superseded/shadowed entries are skipped internally) - returns 0 once
-   there are no more visible entries, at which point *pos sits at the
-   true physical end of the directory, so sdcatalogfree() afterward is
-   accurate (returns i2cEepromSize - pos). The bus-release + overblank
-   re-entry happens at the end of the scan inside sdcatalognext() itself -
-   no separate close call.
+   and fills namebuf (at least SD_FILENAME_MAX+1 bytes) and *size for the
+   next file in the directory - returns 0 once there are no more files.
+   The bus-release + overblank re-entry happens at the end of the scan
+   inside sdcatalognext() itself - no separate close call. sdcatalogfree()
+   returns the free bytes of the drive (pos is no longer used).
 
-   Two real bugs found and fixed across two earlier attempts at this
-   extraction, both real-hardware boot crashes that didn't reproduce on
-   the emulator - worth knowing about if this ever needs touching again:
-   1. The "visible progress" COLUBK write must happen at the START of the
-      *resumed* sdcatalognext() call (after the caller's printing), not
-      at the end of the call that just found an entry (before the
-      caller's printing) - the original inline loop always printed
-      before its own COLUBK write, immediately followed by the next
-      eedir_scan_next() call; the other order stretches the real elapsed
-      time between two vcsLib calls across the caller's entire
-      (ARM-heavy) printing.
-   2. sdcatalognext()'s implementation must NOT call the real libc
-      strncpy()/memcpy()/etc for copying the filename - this project's
-      ELF loader only resolves a small whitelist of external symbols at
-      runtime (vcsLib functions, ColorLookup, memset - see the "-r"
-      relocatable build's undefined-symbol list), and a real strncpy()
-      call is NOT on it (see utfs.c's own strncpy/strncmp macro-redirect
-      to a local replacement, done for exactly this reason - it should
-      have been the tip-off). Use a hand-rolled byte-copy loop instead.
-   Sixth and last function moved out of main.c in this extraction pass. */
+   Two rules, both learned from real-hardware crashes that did not
+   reproduce on the emulator:
+   1. The "visible progress" COLUBK write happens at the START of the
+      *resumed* sdcatalognext() call (after the caller's printing), not at
+      the end of the call that just found an entry - the other order puts
+      the caller's entire (ARM-heavy) printing between two vcsLib calls.
+   2. No libc string functions (strncpy()/memcpy()/...) for copying the
+      filename - the ELF loader only resolves the vcsLib functions and
+      memset (see the "-r" build's undefined-symbol list). Use a
+      hand-rolled byte-copy loop instead. */
 uint8_t sdcatalogopen(const char *drivespec);
 uint8_t sdcatalognext(uint32_t *pos, char *namebuf, uint32_t *size);
 uint32_t sdcatalogfree(uint32_t pos);
@@ -280,8 +183,8 @@ uint32_t sdcatalogsize(void);
 uint8_t sdlistopen(const char *name);
 uint8_t sdlistclose(void);
 
-/* ENTER "En:file" streaming (xenter() in main.c, not yet written) - see
-   the LIST/ENTER project plan. name is the full "En:FILE.EXT" string.
+/* ENTER "En:file" streaming (xenter() in main.c). name is the full
+   "En:FILE.EXT" string.
    Unlike sdlistopen()/sdlistclose(), the window does NOT stay open across
    calls - sdenteropen() mounts and locates the file (its own complete,
    self-contained open+close cycle). sdenterchunk() then opens

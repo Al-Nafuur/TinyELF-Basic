@@ -187,8 +187,8 @@
 #define TFEND -10
 /* these are multibyte token extension, currently unused */
 /* using them would allow over 1000 BASIC keywords */
-#define TFTPCONN -9
-#define TENTER -8 /* ENTER "En:file" - see the LIST/ENTER project plan, another reserved extension slot repurposed same as TFTPCONN above */
+#define TEXT7 -9
+#define TENTER -8 /* ENTER "En:file", uses the reserved TEXT6 slot */
 #define TEXT5 -7
 #define TEXT4 -6
 #define TEXT3 -5
@@ -762,7 +762,6 @@ void xput();
 void xset();
 void xnetstat();
 
-void serialload(unsigned char);
 
 /* Arduino IO control interface */
 void xaread();

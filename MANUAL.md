@@ -281,9 +281,6 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 > Do **not** use `SET 1` (EEPROM autorun flag of the Arduino versions) or `SET 2`…`SET 5` (output/input device switching);
 > they are inherited from other platforms and can lock you out.
 
-#### `CONNECT`
-Reserved for a planned FTP connection through an ESP8266. For now it behaves like `CATALOG`.
-
 ### 3.5 Functions
 
 | Function | Description |
@@ -789,15 +786,15 @@ All keywords:
 
 ```
 ABS       AND       ASC       BIT       BREAK     CATALOG   CHR$      CLR
-CLS       CONNECT   CONT      DATA      DEF       DELAY     DELETE    DIM
-DRAWTO    DUMP      ELSE      END       ENTER     ERROR     FN        FOR
-FORMAT    GET       GOSUB     GOTO      GRAPHICS  HIMEM     IF        INPUT
-INSTR     INT       LEFT$     LEN       LET       LIST      LOAD      LOCATE
-MAP       MID$      MILLIS    NEW       NEXT      NOT       ON        OR
-PEEK      PLOT      POKE      POW       PRINT     PTRIG     PUT       READ
-REM       RESTORE   RETURN    RIGHT$    RND       RUN       SAVE      SET
-SGN       SIZE      SPC       SQR       STEP      STICK     STOP      STR$
-STRIG     TAB       THEN      TO        VAL
+CLS       CONT      DATA      DEF       DELAY     DELETE    DIM       DRAWTO
+DUMP      ELSE      END       ENTER     ERROR     FN        FOR       FORMAT
+GET       GOSUB     GOTO      GRAPHICS  HIMEM     IF        INPUT     INSTR
+INT       LEFT$     LEN       LET       LIST      LOAD      LOCATE    MAP
+MID$      MILLIS    NEW       NEXT      NOT       ON        OR        PEEK
+PLOT      POKE      POW       PRINT     PTRIG     PUT       READ      REM
+RESTORE   RETURN    RIGHT$    RND       RUN       SAVE      SET       SGN
+SIZE      SPC       SQR       STEP      STICK     STOP      STR$      STRIG
+TAB       THEN      TO        VAL
 ```
 
 Operators: `+ - * / % ^  = < > <= >= <>  << >>`.

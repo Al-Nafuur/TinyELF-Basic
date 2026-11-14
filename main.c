@@ -1310,7 +1310,6 @@ const char spulse[]	PROGMEM = "PULSE";
 #endif
 /* DOS functions */
 const char scatalog[]	PROGMEM = "CATALOG";
-const char sftpconn[]	PROGMEM = "CONNECT";
 const char senter[]	PROGMEM = "ENTER";
 const char sdelete[]	PROGMEM = "DELETE";
 #ifdef HASFILEIO
@@ -1471,7 +1470,7 @@ const char* const keyword[] PROGMEM = {
 #ifdef HASPULSE
   spulse,
 #endif
-  scatalog, sftpconn, senter, sdelete,
+  scatalog, senter, sdelete,
 #ifdef HASFILEIO
   sfopen, sfclose, sfdisk,
 #endif
@@ -1569,7 +1568,7 @@ const token_t tokens[] PROGMEM = {
 #ifdef HASPULSE
   TPULSE,
 #endif
-  TCATALOG, TFTPCONN, TENTER, TDELETE,
+  TCATALOG, TENTER, TDELETE,
 #ifdef HASFILEIO
   TOPEN, TCLOSE, TFDISK,
 #endif
@@ -9334,16 +9333,10 @@ void i2c_retry_pause(void) {
   vcsWrite5(VBLANK, 0);
 }
 
-/* FORMAT size - writes a disk header recording 'size' at address 0 (see
-   eedisk_header_write()/EEDISK_HEADER_SIZE in i2c_savekey.h) and blanks
-   the rest of the SaveKey-style I2C EEPROM up to 'size' (writes zero),
-   which also wipes any previous file directory. size is a byte count,
-   capped at 65536 since the underlying EEPROM addressing
-   (i2c_eeprom_write's uint16_t memaddr) only reaches one 64KB chip for
-   now - extend this once a second chip/device address is wired up (see
-   i2c_savekey.h). The disk header is what lets SAVE/LOAD/CATALOG recover
-   the real capacity after a reboot instead of trusting i2cEepromSize's
-   default (see eedisk_header_read()).
+/* FORMAT "En:"[,size] - writes an empty TinyELF file system to drive En
+   (see sdformat() in i2c_savekey.h and tinyelf_format()). size is an
+   optional byte count; 0 or omitted means auto, from the drive's own I2C
+   address scan.
 
    BASIC/bloop() only run during "overblank" (the 6507 looping in RIOT RAM
    with the bus released, see vcsStartOverblank()/vcsEndOverblank()) - any
@@ -10994,7 +10987,7 @@ void xcatalog() {
 #elif defined(STM32)
   {
     uint32_t pos = 0, size, capacity, freebytes;
-    char namebuf[EEDIR_MAX_FILENAME + 1];
+    char namebuf[SD_FILENAME_MAX + 1];
     char drivespec[SBUFSIZE];
 
     nexttoken();
@@ -11017,10 +11010,9 @@ void xcatalog() {
     while (sdcatalognext(&pos, namebuf, &size)) {
       /* outscf()/outnumber() write to shadow videoRAM only (no vcsLib
          calls of their own) but loop internally - precharge before this
-         plain ARM work, same as the old eedir_scan_next()-based loop's
-         vcsNop2n(10) at this exact point (see i2c_savekey.h history). */
+         plain ARM work. */
       vcsJmp3(); vcsNop2n(200);
-      outscf(namebuf, EEDIR_MAX_FILENAME); /* right-pad to fixed width */
+      outscf(namebuf, SD_FILENAME_MAX); /* right-pad to fixed width */
       outspc();
       form = -5; /* left-pad to 5 digits - size is now a sector count, not bytes */
       outnumber(size);
@@ -12501,9 +12493,6 @@ void statement() {
       case TCATALOG:
         xcatalog();
         break;
-      case TFTPCONN:
-        xcatalog(); // connection
-        break;
       case TENTER:
         xenter();
         break;
@@ -13087,130 +13076,6 @@ int main(int argc, char* argv[]) {
    - Avoid allocating a lot of memory in bloop().
 */
 
-void send_uart_command(const unsigned char* pbuffer){
-  uint8_t  c = 0;
-  while( (vcsRead6(SWCHA) != 0xff) ){
-    vcsJmp3();
-  } // waiting for SWCHA ready
-
-  vcsWrite6(SWACNT, 0b00000001);
-  vcsWrite6(SWCHA, 0xff);
-
-  while (*pbuffer != 0){
-    vcsWrite6(SWCHA, 0); // RX start-bit low
-    vcsSleep(117);
-    c = (uint8_t)*pbuffer++;
-    vcsWrite6(SWCHA, c);
-    vcsSleep(117);
-    c = (c >> 1);
-    vcsWrite6(SWCHA, c);
-    vcsSleep(116);
-    c = (c >> 1);
-    vcsWrite6(SWCHA, c);
-    vcsSleep(117);
-    c = (c >> 1);
-    vcsWrite6(SWCHA, c);
-    vcsSleep(117);
-    c = (c >> 1);
-    vcsWrite6(SWCHA, c);
-    vcsSleep(117);
-    c = (c >> 1);
-    vcsWrite6(SWCHA, c);
-    vcsSleep(116);
-    c = (c >> 1);
-    vcsWrite6(SWCHA, c);
-    vcsSleep(117);
-    c = (c >> 1);
-    vcsWrite6(SWCHA, c);
-    vcsSleep(117);
-    vcsWrite6(SWCHA, 1); //RX stop-bit high
-    vcsSleep(117);
-  }
-  vcsWrite6(SWACNT, 0b00000000);
-}
-
-
-/*
- 	LOAD a file from RIOT/TIA UART link 
-*/
-void serialload(unsigned char flag){
-  uint8_t i = 1, c = 0;
-  uint8_t bk = 0x04;
-
-  unsigned char *p = &ibuffer[1];
-  while (*p) p++;
-  *p++ = '\n';
-  *p = '\0';
-
-  outsc(&ibuffer[1]);
-  vcsEndOverblank();
-  vcsWrite5(COLUBK, 0xa0);
-  vcsWrite5(VBLANK, 0); // disable blanking
-
-  send_uart_command(&ibuffer[1]);
-
-  while(! (vcsRead6(INPT5) & 0x80) ){
-    vcsJmp3();
-  } // waiting for start bit getting high again
-
-  vcsWrite5(COLUBK, bk);
-
-  while(c != 4 && i<256){
-    while(vcsRead6(INPT5) & 0x80 ){
-      vcsJmp3();
-    } // wait for start bit (RX low)
-    vcsSleep(140); // 6
-    vcsWrite5(COLUBK, bk);
-    bk += 0x10;
-
-    c = vcsRead6(INPT5);
-    vcsSleep(117);
-    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
-    vcsSleep(116);
-    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
-    vcsSleep(117);
-    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
-    vcsSleep(117);
-    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
-    vcsSleep(117);
-    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
-    vcsSleep(116);
-    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
-    vcsSleep(117);
-    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000); /* vcsRead6 includes the former trailing vcsNop2() */
-    if(c == '\n' || c == '\r' || c == 4){
-      vcsSleep(201);
-      if(flag){
-        ibuffer[i] = '\0';
-        ibuffer[0] = i;
-        bi = ibuffer+1;
-        nexttoken();
-        /* a number triggers the line storage, anything else is executed */
-        if (token == NUMBER) {
-          ax = x;
-          storeline();
-        }
-      }else{
-        ibuffer[i++] = '\n';
-        ibuffer[i] = '\0';
-        outsc(&ibuffer[1]);
-      }
-
-      if(c != 4){
-        i=1;
-        send_uart_command("ACK\n");
-      }
-    } else {
-      vcsSleep(99);
-      ibuffer[i++] = c;
-    }
-  }
-
-  vcsWrite5(VBLANK, 2); // enable blanking
-  vcsStartOverblank();
-  nexttoken();
-}
-
 /* parses a quoted string filename argument. The obvious getfilename()
    further up is gated behind "#if defined(FILESYSTEMDRIVER)", which is
    not defined for this build, so it doesn't exist here - this is a
@@ -13231,8 +13096,8 @@ static void geteefilename(char *buffer) {
 }
 
 /*
- 	LOAD "name" - loads a program from the I2C EEPROM directory (see
- 	i2c_savekey.h's eedir_* functions). f, if non-null, is used instead of
+ 	LOAD "En:name" - loads a program from a TinyELF drive (see sdload() in
+ 	i2c_savekey.h). f, if non-null, is used instead of
  	parsing a filename from the token stream - used for the autoexec.bas
  	boot load in autorun(), where the file quite normally doesn't exist
  	yet (nobody's saved one) - error() prints its message immediately
@@ -13267,9 +13132,8 @@ void xload(const char *f) {
 }
 
 /*
- 	SAVE "name" - saves the current program (mem[0..top)) to the I2C
- 	EEPROM directory. Always appends - see eedir_append()'s comment in
- 	i2c_savekey.h for why a same-named file isn't overwritten in place.
+ 	SAVE "En:name" - saves the current program (mem[0..top)) to a TinyELF
+ 	drive, replacing a file of the same name (see sdsave() in i2c_savekey.h).
 */
 void xsave() {
   char filename[SBUFSIZE];

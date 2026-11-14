@@ -1,10 +1,7 @@
 /*
  * tinyelf_fs.h
  *
- * DOS 2.x-style filesystem for the I2C SaveKey-compatible EEPROM, replacing
- * the earlier append-only eedir_.../eedisk_... format (i2c_savekey.c/.h - kept
- * in place for now, unused once this is fully wired in, removed in a final
- * cleanup pass once this is verified end-to-end on hardware).
+ * DOS 2.x-style filesystem for the I2C SaveKey-compatible EEPROM.
  *
  * Format designed and hardware-verified by the SaveKey-Manager sibling
  * project (relayed via a peer Claude session, 2026-09-11); reference
@@ -59,8 +56,7 @@
    lowest address is). */
 
 /* capacityOverride: 0 = auto (addressCount * 65536 for a multi-address
-   drive; 32768 - matching this codebase's old i2cEepromSize default - for
-   a single-address drive, since a lone ACKing address is genuinely
+   drive; 32768 (24LC256) for a single-address drive, since a lone ACKing address is genuinely
    capacity-ambiguous from the scan alone, confirmed by SaveKey-Manager).
    A nonzero override is validated against the drive's known capacity for
    a multi-address drive (rejected if too large) and accepted as-is for a
@@ -81,7 +77,7 @@ uint8_t tinyelf_format(uint8_t drive, uint32_t capacityOverride);
    and returns 1. Returns 0 if the drive isn't present, or is
    unformatted/bad magic (layout left unchanged/invalid - subsequent
    tinyelf_* calls will fail safely). Cheap to call at the start of every
-   command, same as the old eedisk_header_read() pattern. */
+   command. */
 uint8_t tinyelf_mount(uint8_t drive);
 
 /* name8/ext3 are space-padded, exactly TINYELF_NAME_LEN/TINYELF_EXT_LEN
@@ -126,8 +122,7 @@ uint8_t tinyelf_dir_next(uint32_t *slot, char *name8, char *ext3, uint32_t *sect
 uint32_t tinyelf_free_bytes(void);
 
 /* Total formatted capacity in bytes (totalSectors * sectorSize), for
-   CATALOG's "Size" line - replaces the old format's i2cEepromSize global,
-   which this filesystem never touches. Returns 0 if not mounted. */
+   CATALOG's "Size" line. Returns 0 if not mounted. */
 uint32_t tinyelf_capacity_bytes(void);
 
 /* ---- streaming SAVE, for content whose total length isn't known upfront
