@@ -1,0 +1,861 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TinyELF Image Converter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a workbench - settings rail on the left, the 2600 screen and the generated listing on the right */
+:root {
+  --bg: #eceef2;
+  --panel: #ffffff;
+  --ink: #141821;
+  --muted: #586172;
+  --line: #d3d8e1;
+  --accent: #2b44b5;
+  --accent-ink: #ffffff;
+  --crt: #07080c;
+  --crt-edge: #262b36;
+  --warn: #9a4f06;
+  --f-display: "Chakra Petch", "Bahnschrift", "Segoe UI", sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1217; --panel: #171b22; --ink: #e4e7ed; --muted: #98a1b2; --line: #2a3140;
+    --accent: #8d9dff; --accent-ink: #0b0f1e; --crt: #020305; --crt-edge: #313848; --warn: #f0a24a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1217; --panel: #171b22; --ink: #e4e7ed; --muted: #98a1b2; --line: #2a3140;
+  --accent: #8d9dff; --accent-ink: #0b0f1e; --crt: #020305; --crt-edge: #313848; --warn: #f0a24a;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 var(--f-body);
+}
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 40px; }
+header { display: grid; gap: 8px; margin-bottom: 22px; }
+h1 {
+  font: 700 clamp(26px, 4vw, 38px)/1.05 var(--f-display); letter-spacing: 0.01em; margin: 0;
+  text-wrap: balance;
+}
+h1 span { color: var(--accent); }
+.lede { margin: 0; color: var(--muted); max-width: 68ch; }
+.spec { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 4px 0 0; padding: 0; list-style: none;
+  font: 500 12.5px/1.4 var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.spec b { color: var(--ink); font-weight: 500; }
+.spec li + li::before, .stats li + li::before { content: "·"; margin-right: 14px; color: var(--line); }
+
+.bench { display: grid; grid-template-columns: minmax(0, 350px) minmax(0, 1fr); gap: 22px; align-items: start; }
+@media (max-width: 880px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+
+.rail { display: grid; gap: 14px; }
+fieldset { margin: 0; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); padding: 12px 14px 14px; display: grid; gap: 10px; min-width: 0; }
+legend { font: 600 11px/1 var(--f-body); text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); padding: 0 6px; }
+.row { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.row.two { grid-template-columns: 112px minmax(0, 1fr); }
+label, .lbl { font-size: 13.5px; }
+output, .val { font: 500 12.5px/1 var(--f-mono); color: var(--muted); min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+select, input[type="number"], input[type="text"] {
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; padding: 5px 8px; width: 100%; min-width: 0;
+}
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.drop {
+  border: 1.5px dashed var(--line); border-radius: var(--r); padding: 12px; display: grid;
+  grid-template-columns: 84px minmax(0, 1fr); gap: 12px; align-items: center; cursor: pointer;
+}
+.drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.drop canvas { width: 84px; height: 64px; object-fit: contain; background: var(--bg); border-radius: 3px; }
+.drop p { margin: 0; font-size: 13.5px; }
+.drop small { color: var(--muted); display: block; font-size: 12.5px; overflow-wrap: anywhere; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; }
+button {
+  font: 600 13.5px/1 var(--f-body); border-radius: 4px; padding: 9px 14px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+}
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button:hover { filter: brightness(1.06); }
+.presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.presets button { padding: 5px 9px; font: 500 12px/1 var(--f-mono); }
+
+.swatchbar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pick { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); cursor: pointer; font-size: 13px; text-align: left; }
+.pick[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.pick i { width: 22px; height: 18px; border-radius: 2px; flex: none; border: 1px solid var(--line); }
+.pick span { display: grid; line-height: 1.2; }
+.pick small { font: 500 11.5px/1.2 var(--f-mono); color: var(--muted); }
+.palette { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 2px; }
+.palette button { aspect-ratio: 1 / 1; padding: 0; border: 0; border-radius: 2px; min-width: 0; }
+.palette button.sel { outline: 2px solid var(--ink); outline-offset: 1px; position: relative; z-index: 1; }
+.hint { margin: 0; font-size: 12.5px; color: var(--muted); }
+.rail-sub { display: grid; gap: 10px; }
+.caption .check { font: 500 12.5px/1.4 var(--f-body); color: var(--ink); }
+select:disabled, input:disabled { opacity: 0.45; }
+
+.stage { display: grid; gap: 16px; min-width: 0; }
+.crt { background: var(--crt); border: 1px solid var(--crt-edge); border-radius: 10px; padding: clamp(10px, 3vw, 26px); }
+.crt canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; }
+.caption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; font: 500 12.5px/1.4 var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.stats { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; font: 500 12.5px/1.4 var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--ink); font-weight: 500; }
+.warn { color: var(--warn); font-size: 13px; margin: 0; }
+
+.listing { border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); display: grid; min-width: 0; }
+.listing header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; margin: 0; border-bottom: 1px solid var(--line); }
+.listing h2 { font: 600 15px/1.2 var(--f-display); letter-spacing: 0.02em; margin: 0; }
+textarea {
+  width: 100%; min-height: 260px; resize: vertical; border: 0; padding: 12px; background: transparent; color: var(--ink);
+  font: 13px/1.45 var(--f-mono); white-space: pre; overflow: auto; border-radius: 0 0 var(--r) var(--r);
+}
+.howto { border-top: 1px solid var(--line); padding: 12px 14px 14px; font-size: 13.5px; display: grid; gap: 6px; }
+.howto ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.howto code, .note code { font: 13px var(--f-mono); }
+.note { font-size: 13px; color: var(--muted); margin: 0; max-width: 75ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>TinyELF <span>Image Converter</span></h1>
+    <p class="lede">Turns a picture into a TinyELF Basic program: the image becomes <code>DATA</code> lines, and a short loop copies them into the <code>GRAPHICS 8</code> video RAM.</p>
+    <ul class="spec" aria-label="Target format">
+      <li><b>145 × 181</b> PLOT grid</li>
+      <li><b>139 × 168</b> visible pixels</li>
+      <li>video RAM at <b>4096</b>, <b>3360</b> bytes</li>
+      <li>needs TinyELF Basic <b>v0.13+</b> (DATA/READ)</li>
+    </ul>
+  </header>
+
+  <div class="bench">
+    <div class="rail">
+      <fieldset>
+        <legend>Picture</legend>
+        <label class="drop" id="drop" for="file">
+          <canvas id="thumb" width="168" height="128" aria-hidden="true"></canvas>
+          <div>
+            <p><b>Drop an image here</b> or click to choose one</p>
+            <small id="srcinfo">Sample image loaded</small>
+          </div>
+        </label>
+        <input type="file" id="file" accept="image/*" hidden>
+        <div class="btns"><button type="button" id="sample">Load sample</button></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Screen</legend>
+        <div class="row two"><label for="mode">Mode</label>
+          <select id="mode">
+            <option value="full">Full screen (145 × 181)</option>
+            <option value="window">Text window (145 × 143)</option>
+          </select></div>
+        <div class="row two"><label for="fit">Fit</label>
+          <select id="fit">
+            <option value="contain">Whole picture (letterbox)</option>
+            <option value="cover">Fill screen (crop)</option>
+            <option value="stretch">Stretch</option>
+          </select></div>
+        <div class="row"><label for="par">Pixel aspect</label><input type="range" id="par" min="1" max="2.4" step="0.05" value="1.6"><output id="parv" for="par">1.60</output></div>
+        <div class="presets" role="group" aria-label="Pixel aspect presets">
+          <button type="button" data-par="1.6">NTSC 1.6</button>
+          <button type="button" data-par="1.9">PAL 1.9</button>
+          <button type="button" data-par="1">square 1.0</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Tone and dithering</legend>
+        <div class="row"><label for="bright">Brightness</label><input type="range" id="bright" min="-100" max="100" value="0"><output id="brightv" for="bright">0</output></div>
+        <div class="row"><label for="contrast">Contrast</label><input type="range" id="contrast" min="-100" max="100" value="0"><output id="contrastv" for="contrast">0</output></div>
+        <div class="row"><label for="gamma">Gamma</label><input type="range" id="gamma" min="0.3" max="3" step="0.05" value="1"><output id="gammav" for="gamma">1.00</output></div>
+        <div class="row two"><label for="dither">Dithering</label>
+          <select id="dither">
+            <option value="atkinson">Atkinson</option>
+            <option value="fs">Floyd-Steinberg</option>
+            <option value="bayer">Ordered (Bayer 8 × 8)</option>
+            <option value="threshold">None (threshold)</option>
+          </select></div>
+        <div class="row"><label for="thresh">Threshold</label><input type="range" id="thresh" min="5" max="95" value="50"><output id="threshv" for="thresh">50</output></div>
+        <label class="check"><input type="checkbox" id="invert"> Invert (light pixels on a dark picture)</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Colours</legend>
+        <div class="row two"><label for="cmode">Colour mode</label>
+          <select id="cmode">
+            <option value="line">Colour per line</option>
+            <option value="mono">Two colours</option>
+            <option value="bgonly">Background only</option>
+          </select></div>
+        <div class="row two" id="cpalrow"><label for="cpal">Colours from</label>
+          <select id="cpal"><option value="full">All 128 colours</option><option value="grey">Greys only</option></select></div>
+        <div class="row two"><label for="tv">TV system</label>
+          <select id="tv"><option value="NTSC">NTSC palette</option><option value="PAL">PAL palette</option></select></div>
+        <div id="monopick" class="rail-sub">
+          <div class="swatchbar" role="group" aria-label="Colour to edit">
+            <button type="button" class="pick" id="pickfg" aria-pressed="true"><i id="fgsw"></i><span>Pixels<small id="fgval">14 · $0E</small></span></button>
+            <button type="button" class="pick" id="pickbg" aria-pressed="false"><i id="bgsw"></i><span>Background<small id="bgval">0 · $00</small></span></button>
+          </div>
+          <div class="palette" id="palette" role="group" aria-label="TIA colours"></div>
+        </div>
+        <p class="hint" id="cmodehint"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Program</legend>
+        <div class="row two"><label for="format">DATA format</label>
+          <select id="format">
+            <option value="compact">Compact</option>
+            <option value="plain">Plain</option>
+          </select></div>
+        <div class="row two"><label for="fname">File name</label><input type="text" id="fname" maxlength="8" value="SAMPLE" spellcheck="false" autocomplete="off"></div>
+        <div class="row two"><label for="lstart">First line</label><input type="number" id="lstart" min="1" max="60000" value="10"></div>
+        <div class="row two"><label for="lstep">Line step</label><input type="number" id="lstep" min="1" max="100" value="10"></div>
+        <div class="row two"><label for="dstart">DATA from line</label><input type="number" id="dstart" min="1" max="60000" value="1000"></div>
+        <div class="row two"><label for="maxlen">Max line length</label><input type="number" id="maxlen" min="40" max="240" value="200"></div>
+        <p class="hint">Compact skips runs of empty bytes with one negative number, so dark pictures stay small. Plain writes one value per byte.</p>
+        <label class="check"><input type="checkbox" id="waitkey" checked> Wait for a key, then back to GRAPHICS 0</label>
+      </fieldset>
+    </div>
+
+    <div class="stage">
+      <div class="crt"><canvas id="screen" width="696" height="543" aria-label="Preview of the picture as TinyELF Basic will show it"></canvas></div>
+      <div class="caption"><span id="capmode">GRAPHICS 8+16 · 145 × 181</span><label class="check"><input type="checkbox" id="tvblend"> Simulate the TV (flicker blend)</label><span id="captv">NTSC palette · pixel aspect 1.60</span></div>
+      <ul class="stats" id="stats"></ul>
+      <p class="warn" id="warn" hidden></p>
+
+      <section class="listing" aria-labelledby="lt">
+        <header>
+          <h2 id="lt">BASIC listing <span id="lname" class="val"></span></h2>
+          <div class="btns">
+            <button type="button" class="primary" id="copy">Copy listing</button>
+            <button type="button" id="download">Download .BAS</button>
+          </div>
+        </header>
+        <textarea id="out" readonly spellcheck="false" aria-label="Generated BASIC program"></textarea>
+        <div class="howto">
+          <b>Load it on the Atari</b>
+          <ol>
+            <li>Save the listing as a text file with an 8.3 name, for example <code id="howname">SAMPLE.BAS</code>.</li>
+            <li>Copy the file to the SaveKey with SaveKey-Manager (drive E1).</li>
+            <li>In TinyELF Basic type <code>NEW</code>, then <code id="howenter">ENTER "E1:SAMPLE.BAS"</code>, then <code>RUN</code>.</li>
+          </ol>
+          <p class="note" id="dlnote" hidden>Downloads are blocked inside this viewer. Copy the listing, or open the HTML file directly in a browser to download it.</p>
+        </div>
+      </section>
+
+      <p class="note">The 2600 draws at most 160 pixels per line. TinyELF's <code>GRAPHICS 8</code> places 18 player columns on 145 PLOT positions; 6 of them are always dark, and every 13th line is the blank gap between two text rows. The converter samples the picture on exactly this grid, so any image size works: a 288 × 192 picture is scaled down to 145 columns. The kernel draws each lit pixel in every second frame and changes the background only every second line, so the TV blends neighbouring colours; <i>Simulate the TV</i> shows that mix.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const PALHEX = {
+    NTSC: '0606063434345c5c5c888888b8b8b8e3e3e3fffffffffffe32320754540d7b7b15a9a81dd8d726ffff2fffff30ffff296a1c0788320ea64d17c76b21e68c2bffad37ffd142fff34f861307a62610c73d1bea5928ff7736ff9846ffb956ffdb678b0707ac1212cc2121ec3333ff4747ff5e5eff7575ff8d8d74074d921268af2087cd32a6ea44c5ff5ae5ff70ffff87ff3807745211966d20b78c31dcaa44feca5affea6fffff87ff0e07842112a43721c55333e77147ff925dffb574ffd98dff07078a1112aa1d20ca2d32ea3e46ff515dff6574ff7a8cff07127911279a1e40bc2e60e03f81ff52a5ff66ccff7cf2ff071e4c1139701e59952e7ebf40a5e953cfff67faff7dffff072a1e114b371e73552fa07640d09a53ffbf68ffe774ffff072d0712501221772134a33448d4485fff5f76ff768bff8b0f27072348113c6f1e5c9d2f7fcf40a4ff54ccff68d1ff651f24073942105a651d7f8e2ba6b93bd0e64dfcff5fffff5f311c0754370f7a561aa87c27d6a434ffce43fffc52ffff51',
+    PAL: '0606061c1c1c3a3a3a5f5f5f898989b8b8b8e7e7e7fffeff0505051c1c1c3a3a3a5f5f5f898989b8b8b8e7e7e7fffeff211305472a05745205a77e05d4aa1effda3fffff61ffff76052905055105217e0546ae086cde2398ff45c5ff68d8ff853a0505661505953805c35d1ff68740ffb367ffe590fff0b5052c050555050d7e0d29ac294ddc4d74ff74a2ffa2bcffbc45050b7207129f232fce4555ff6b7dff98aaffc7deffe6f2052316054c2b06794422a46b43d49769ffc794fffbacfffe36052a7005509b1b77cc3aa4fe61d4ff8affffbdffffdcff051e33053b620b638d268dbc49baee70eeff9dffffaeffff2f056158058f8019bcac38eede5effff88ffffbaffffe1ff05186a05249a1846c9376cfe5d97ff89c9ffbaffffcdffff1205843405b9581fe88140ffaf67ffd493fff6c5ffffedff05058a1310b9322dea5751ff7e79ffafa9ffe5defffef6ff0505051c1c1c3a3a3a5f5f5f898989b8b8b8e7e7e7fffeff0505051c1c1c3a3a3a5f5f5f898989b8b8b8e7e7e7fffeff'
+  };
+
+  /* GRAPHICS 8 column mapping, same tables as plotColStartX/TopBit/NumBits in TinyELF's main.c */
+  const COL_START = [0, 8, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 114, 122, 130, 138];
+  const COL_TOP   = [6, 7, 7, 6, 7, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 6, 7, 6];
+  const COL_N     = [7, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 7];
+  const VW = 145, ROW_UNIT = 13, LINE_BYTES = 20, ROW_BYTES = 240, VRAM = 4096, NUM_BG = 182;
+  const BAYER8 = [0,32,8,40,2,34,10,42,48,16,56,24,50,18,58,26,12,44,4,36,14,46,6,38,60,28,52,20,62,30,54,22,
+                  3,35,11,43,1,33,9,41,51,19,59,27,49,17,57,25,15,47,7,39,13,45,5,37,63,31,55,23,61,29,53,21];
+
+  function mapX(x) {
+    for (let c = 0; c < 18; c++) {
+      const s = COL_START[c], n = COL_N[c];
+      if (x < s) return null;               /* dark gap before this column */
+      if (x < s + n) return { col: c, mask: 1 << (COL_TOP[c] - (x - s)) };
+    }
+    return null;
+  }
+  const VISX = [], XMAP = [];
+  for (let x = 0; x < VW; x++) { const m = mapX(x); if (m) { VISX.push(x); XMAP.push(m); } }
+
+  const $ = id => document.getElementById(id);
+  const state = { img: null, name: 'SAMPLE', isSample: true, fg: 14, bg: 0, target: 'fg', nameEdited: false };
+  let framed = false;
+  try { framed = window.self !== window.top; } catch (e) { framed = true; }
+
+  const hex2 = v => '$' + v.toString(16).toUpperCase().padStart(2, '0');
+  const palColor = (sys, v) => '#' + PALHEX[sys].substr(((v >> 1) & 127) * 6, 6);
+  const sanitizeName = s => (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'IMAGE';
+
+  function geometry(mode) {
+    const rows = mode === 'full' ? 14 : 11;
+    const vh = mode === 'full' ? rows * ROW_UNIT - 1 : rows * ROW_UNIT;   /* no gap line after the last row */
+    const visY = [];
+    for (let y = 0; y < vh; y++) if (y % ROW_UNIT !== ROW_UNIT - 1) visY.push(y);
+    return { rows, vh, visY };
+  }
+
+  function readOpts() {
+    const int = (id, lo, hi, d) => { const v = parseInt($(id).value, 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+    return {
+      mode: $('mode').value, fit: $('fit').value, par: +$('par').value,
+      bright: +$('bright').value, contrast: +$('contrast').value, gamma: +$('gamma').value,
+      invert: $('invert').checked, dither: $('dither').value, thresh: +$('thresh').value / 100,
+      tv: $('tv').value, format: $('format').value, waitkey: $('waitkey').checked,
+      lstart: int('lstart', 1, 60000, 10), lstep: int('lstep', 1, 100, 10),
+      dstart: int('dstart', 1, 60000, 1000), maxlen: int('maxlen', 40, 240, 200),
+      fname: sanitizeName($('fname').value), fg: state.fg, bg: state.bg,
+      cmode: $('cmode').value, cpal: $('cpal').value, tvblend: $('tvblend').checked
+    };
+  }
+
+  /* ---- colours ---- */
+  const palRGB = (sys, v) => { const h = PALHEX[sys].substr(((v >> 1) & 127) * 6, 6); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; };
+  /* colours are compared in CIELAB (D65), so hue and lightness count the way the eye sees them */
+  function toLab(r, g, b) {
+    const f = c => { c = Math.max(0, Math.min(255, c)) / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const R = f(r), G = f(g), B = f(b);
+    const h = t => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+    const fx = h((R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047), fy = h(R * 0.2126 + G * 0.7152 + B * 0.0722), fz = h((R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883);
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+  }
+  const labDist = (a, b) => { const dl = a[0] - b[0], da = a[1] - b[1], db = a[2] - b[2]; return dl * dl + da * da + db * db; };
+  /* the TIA values a colour mode may use, without duplicate RGB values */
+  function candidates(sys, grey) {
+    const seen = new Set(), list = [];
+    for (let v = 0; v < 256; v += 2) {
+      if (grey && (v >> 4) !== 0) continue;
+      const c = palRGB(sys, v), key = c.join(',');
+      if (seen.has(key)) continue;
+      seen.add(key); list.push({ v, r: c[0], g: c[1], b: c[2], lab: toLab(c[0], c[1], c[2]) });
+    }
+    return list;
+  }
+  function nearest(cand, r, g, b) {
+    const lab = toLab(r, g, b);
+    let best = 0, bd = Infinity;
+    for (let k = 0; k < cand.length; k++) { const d = labDist(lab, cand[k].lab); if (d < bd) { bd = d; best = k; } }
+    return best;
+  }
+
+  /* Colour per line: one background per scanline (POKE 1024+Y) and one pixel colour per text row
+     (POKE 256+R). Alternates between picking the best row colour for the current line backgrounds
+     and the best line backgrounds for the current row colour, then dithers each line between its
+     two colours. "Background only" keeps just the line colours. */
+  function colourConvert(rgba, g, o, tone) {
+    const nx = VISX.length, ny = g.visY.length, grey = o.cpal === 'grey';
+    const cand = candidates(o.tv, grey), nc = cand.length;
+    const px = (p) => {   /* tone-mapped RGB of one sampled pixel, letterbox = black */
+      if (rgba[p + 3] < 128) return [0, 0, 0];
+      if (grey) { const l = tone((0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2]) / 255) * 255; return [l, l, l]; }
+      return [tone(rgba[p] / 255) * 255, tone(rgba[p + 1] / 255) * 255, tone(rgba[p + 2] / 255) * 255];
+    };
+    const bgCount = o.mode === 'full' ? NUM_BG : g.rows * ROW_UNIT;
+    const bg = new Array(bgCount).fill(0), fg = new Array(g.rows).fill(0);
+
+    /* every virtual line's mean colour - used for the gap lines and for "Background only" */
+    const lineMean = y => {
+      let r = 0, gg = 0, b = 0;
+      for (let x = 0; x < VW; x++) { const c = px((y * VW + x) * 4); r += c[0]; gg += c[1]; b += c[2]; }
+      return [r / VW, gg / VW, b / VW];
+    };
+    for (let y = 0; y < g.vh; y++) {
+      if (o.cmode === 'bgonly' || y % ROW_UNIT === ROW_UNIT - 1) { const m = lineMean(y); bg[y] = cand[nearest(cand, m[0], m[1], m[2])].v; }
+    }
+    if (o.mode === 'full') bg[NUM_BG - 1] = bg[g.vh - 1];
+    if (o.cmode === 'bgonly') {
+      for (let r = 0; r < g.rows; r++) fg[r] = bg[r * ROW_UNIT];
+      return { lit: new Uint8Array(nx * ny), fg, bg };
+    }
+
+    const P = new Float32Array(nx * ny * 3), off = new Uint8Array(nx * ny);
+    g.visY.forEach((y, j) => {
+      for (let i = 0; i < nx; i++) {
+        const p = (y * VW + VISX[i]) * 4, k = j * nx + i;
+        if (rgba[p + 3] < 128) off[k] = 1;
+        const c = px(p); P[k * 3] = c[0]; P[k * 3 + 1] = c[1]; P[k * 3 + 2] = c[2];
+      }
+    });
+
+    /* distance of every pixel to every candidate, computed once */
+    const D = new Float32Array(nx * ny * nc);
+    for (let k = 0; k < nx * ny; k++) {
+      const lab = toLab(P[k * 3], P[k * 3 + 1], P[k * 3 + 2]);
+      for (let c = 0; c < nc; c++) D[k * nc + c] = labDist(lab, cand[c].lab);
+    }
+    const B = new Int32Array(ny), F = new Int32Array(g.rows);
+    for (let j = 0; j < ny; j++) {   /* start: each line's background = its mean colour */
+      let r = 0, gg = 0, b = 0;
+      for (let i = 0; i < nx; i++) { const k = (j * nx + i) * 3; r += P[k]; gg += P[k + 1]; b += P[k + 2]; }
+      B[j] = nearest(cand, r / nx, gg / nx, b / nx);
+    }
+    for (let iter = 0; iter < 3; iter++) {
+      for (let row = 0; row < g.rows; row++) {
+        let best = 0, bc = Infinity;
+        for (let c = 0; c < nc; c++) {
+          let s = 0;
+          for (let j = row * 12; j < row * 12 + 12; j++) {
+            const bj = B[j];
+            for (let i = 0; i < nx; i++) { const k = (j * nx + i) * nc; const a = D[k + c], d = D[k + bj]; s += a < d ? a : d; }
+          }
+          if (s < bc) { bc = s; best = c; }
+        }
+        F[row] = best;
+      }
+      for (let j = 0; j < ny; j++) {
+        const f = F[(j / 12) | 0];
+        let best = 0, bc = Infinity;
+        for (let c = 0; c < nc; c++) {
+          let s = 0;
+          for (let i = 0; i < nx; i++) { const k = (j * nx + i) * nc; const a = D[k + f], d = D[k + c]; s += a < d ? a : d; }
+          if (s < bc) { bc = s; best = c; }
+        }
+        B[j] = best;
+      }
+    }
+
+    const lit = ditherColour(P, off, nx, ny, o, j => cand[F[(j / 12) | 0]], j => cand[B[j]]);
+    g.visY.forEach((y, j) => { bg[y] = cand[B[j]].v; });
+    /* the blank line between two text rows can't show pixels: continue the neighbouring backgrounds
+       instead of the line's average, which would draw a stripe through text or a sun */
+    for (let y = ROW_UNIT - 1; y < g.vh; y += ROW_UNIT) {
+      const up = cand[B[g.visY.indexOf(y - 1)]], dn = y + 1 < g.vh ? cand[B[g.visY.indexOf(y + 1)]] : up;
+      bg[y] = cand[nearest(cand, (up.r + dn.r) / 2, (up.g + dn.g) / 2, (up.b + dn.b) / 2)].v;
+    }
+    if (o.mode === 'full') bg[NUM_BG - 1] = bg[g.vh - 1];
+    for (let r = 0; r < g.rows; r++) fg[r] = cand[F[r]].v;
+    return { lit, fg, bg };
+  }
+
+  /* dithers each pixel between its row colour F and its line colour B (RGB error diffusion) */
+  function ditherColour(P, off, nx, ny, o, rowCol, lineCol) {
+    const out = new Uint8Array(nx * ny), t = o.thresh;
+    const diffuse = o.dither === 'fs' || o.dither === 'atkinson', fs = o.dither === 'fs';
+    const E = diffuse ? Float32Array.from(P) : P;
+    const kern = fs ? [[1, 0, 7 / 16], [-1, 1, 3 / 16], [0, 1, 5 / 16], [1, 1, 1 / 16]]
+                    : [[1, 0, 1 / 8], [2, 0, 1 / 8], [-1, 1, 1 / 8], [0, 1, 1 / 8], [1, 1, 1 / 8], [0, 2, 1 / 8]];
+    for (let y = 0; y < ny; y++) {
+      const F = rowCol(y), B = lineCol(y);
+      const dr = F.r - B.r, dg = F.g - B.g, db = F.b - B.b, den = dr * dr + dg * dg + db * db;
+      const rev = fs && (y & 1);
+      for (let k = 0; k < nx; k++) {
+        const x = rev ? nx - 1 - k : k, i = y * nx + x;
+        if (off[i]) continue;
+        const r = E[i * 3], gg = E[i * 3 + 1], b = E[i * 3 + 2];
+        const tt = den > 0 ? ((r - B.r) * dr + (gg - B.g) * dg + (b - B.b) * db) / den : 0;
+        let on;
+        if (den === 0) on = 0;
+        else if (o.dither === 'bayer') on = tt > (BAYER8[(y & 7) * 8 + (x & 7)] + 0.5) / 64 + (t - 0.5) ? 1 : 0;
+        else on = tt >= t ? 1 : 0;
+        out[i] = on;
+        if (!diffuse) continue;
+        const C = on ? F : B, er = r - C.r, eg = gg - C.g, eb = b - C.b;
+        for (const [ddx, ddy, wgt] of kern) {
+          const xx = x + (rev ? -ddx : ddx), yy = y + ddy;
+          if (xx < 0 || xx >= nx || yy >= ny) continue;
+          const j = yy * nx + xx;
+          if (off[j]) continue;
+          E[j * 3] = Math.max(-255, Math.min(510, E[j * 3] + er * wgt));
+          E[j * 3 + 1] = Math.max(-255, Math.min(510, E[j * 3 + 1] + eg * wgt));
+          E[j * 3 + 2] = Math.max(-255, Math.min(510, E[j * 3 + 2] + eb * wgt));
+        }
+      }
+    }
+    return out;
+  }
+
+  /* draws the source onto the virtual 145-wide grid; a virtual pixel is 'par' times wider than tall */
+  function sampleSource(img, o, g) {
+    const c = document.createElement('canvas'); c.width = VW; c.height = g.vh;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    let dx, dy, dw, dh;
+    if (o.fit === 'stretch') { dx = 0; dy = 0; dw = VW; dh = g.vh; }
+    else {
+      const s = (o.fit === 'cover' ? Math.max : Math.min)(VW * o.par / w, g.vh / h);
+      dw = w * s / o.par; dh = h * s; dx = (VW - dw) / 2; dy = (g.vh - dh) / 2;
+    }
+    let src = img, sw = w, sh = h;   /* halve in steps so large photos are averaged, not skipped */
+    while (sw > dw * 2 || sh > dh * 2) {
+      const nw = sw > dw * 2 ? Math.max(1, Math.round(sw / 2)) : sw;
+      const nh = sh > dh * 2 ? Math.max(1, Math.round(sh / 2)) : sh;
+      const t = document.createElement('canvas'); t.width = nw; t.height = nh;
+      const tc = t.getContext('2d'); tc.imageSmoothingEnabled = true; tc.imageSmoothingQuality = 'high';
+      tc.drawImage(src, 0, 0, sw, sh, 0, 0, nw, nh);
+      src = t; sw = nw; sh = nh;
+    }
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, 0, 0, sw, sh, dx, dy, dw, dh);
+    return ctx.getImageData(0, 0, VW, g.vh).data;
+  }
+
+  function toneCurve(o) {
+    const C = o.contrast * 2.55, f = (259 * (C + 255)) / (255 * (259 - C));
+    return v => {
+      v = (v + o.bright / 200 - 0.5) * f + 0.5;
+      v = Math.min(1, Math.max(0, v));
+      if (o.gamma !== 1) v = Math.pow(v, 1 / o.gamma);
+      return o.invert ? 1 - v : v;
+    };
+  }
+
+  function dither(vals, off, nx, ny, o) {
+    const out = new Uint8Array(nx * ny), t = o.thresh;
+    if (o.dither === 'threshold') {
+      for (let i = 0; i < vals.length; i++) out[i] = !off[i] && vals[i] >= t ? 1 : 0;
+      return out;
+    }
+    if (o.dither === 'bayer') {
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+        const i = y * nx + x, m = (BAYER8[(y & 7) * 8 + (x & 7)] + 0.5) / 64 + (t - 0.5);
+        out[i] = !off[i] && vals[i] > m ? 1 : 0;
+      }
+      return out;
+    }
+    const e = Float32Array.from(vals);
+    const fs = o.dither === 'fs';
+    const kern = fs ? [[1, 0, 7 / 16], [-1, 1, 3 / 16], [0, 1, 5 / 16], [1, 1, 1 / 16]]
+                    : [[1, 0, 1 / 8], [2, 0, 1 / 8], [-1, 1, 1 / 8], [0, 1, 1 / 8], [1, 1, 1 / 8], [0, 2, 1 / 8]];
+    for (let y = 0; y < ny; y++) {
+      const rev = fs && (y & 1);
+      for (let k = 0; k < nx; k++) {
+        const x = rev ? nx - 1 - k : k, i = y * nx + x;
+        if (off[i]) continue;
+        const nv = e[i] >= t ? 1 : 0, err = e[i] - nv;
+        out[i] = nv;
+        for (const [ddx, ddy, wgt] of kern) {
+          const xx = x + (rev ? -ddx : ddx), yy = y + ddy;
+          if (xx < 0 || xx >= nx || yy >= ny) continue;
+          const j = yy * nx + xx;
+          if (!off[j]) e[j] += err * wgt;
+        }
+      }
+    }
+    return out;
+  }
+
+  /* same byte layout as plot_pixel_raw(): row*240 + line*20 + column, byte 18 = composite of columns 0 and 2 */
+  function packVram(lit, g) {
+    const bytes = new Uint8Array(g.rows * ROW_BYTES), nx = VISX.length;
+    g.visY.forEach((y, j) => {
+      const base = ((y / ROW_UNIT) | 0) * ROW_BYTES + (y % ROW_UNIT) * LINE_BYTES;
+      for (let i = 0; i < nx; i++) if (lit[j * nx + i]) bytes[base + XMAP[i].col] |= XMAP[i].mask;
+    });
+    for (let r = 0; r < g.rows; r++) for (let l = 0; l < 12; l++) {
+      const b = r * ROW_BYTES + l * LINE_BYTES;
+      bytes[b + 18] = (bytes[b] & 0x07) | (bytes[b + 2] & 0xF8);
+    }
+    return bytes;
+  }
+
+  function encode(bytes, fmt) {
+    if (fmt === 'plain') return Array.from(bytes);
+    const v = []; let run = 0;
+    for (const b of bytes) {
+      if (b === 0) { run++; continue; }
+      if (run) { v.push(-run); run = 0; }
+      v.push(b);
+    }
+    if (run) v.push(-run);      /* the loop runs until the last address, so the tail is skipped too */
+    return v;
+  }
+
+  function buildProgram(bytes, g, o, rowFg, lineBg) {
+    const full = o.mode === 'full', out = [], pixels = o.cmode !== 'bgonly';
+    let n = o.lstart;
+    const next = () => { const v = n; n += o.lstep; return v; };
+    const endAddr = VRAM + bytes.length;
+    out.push(`${next()} REM ${o.fname}.BAS ${VW}X${g.vh} TINYELF IMAGE CONVERTER`);
+    out.push(`${next()} GRAPHICS ${full ? '8+16' : '8'}`);
+    if (o.cmode === 'mono') {
+      out.push(`${next()} FOR R=0 TO ${g.rows - 1}: POKE 256+R,${o.fg}: NEXT R`);
+      out.push(`${next()} FOR Y=0 TO ${lineBg.length - 1}: POKE 1024+Y,${o.bg}: NEXT Y`);
+    } else {
+      if (pixels) out.push(`${next()} FOR R=0 TO ${g.rows - 1}: READ V: POKE 256+R,V: NEXT R`);
+      out.push(`${next()} FOR Y=0 TO ${lineBg.length - 1}: READ V: POKE 1024+Y,V: NEXT Y`);
+    }
+    if (!pixels) { /* background only: nothing to copy into the video RAM */ }
+    else if (o.format === 'compact') {
+      const a = next(), b = next(), c = next(), d = next();
+      out.push(`${a} A=${VRAM}`);
+      out.push(`${b} READ V: IF V<0 THEN A=A-V: GOTO ${d}`);
+      out.push(`${c} POKE A,V: A=A+1`);
+      out.push(`${d} IF A<${endAddr} THEN GOTO ${b}`);
+    } else {
+      out.push(`${next()} FOR I=0 TO ${bytes.length - 1}: READ V: POKE ${VRAM}+I,V: NEXT I`);
+    }
+    if (o.waitkey) { const w = next(); out.push(`${w} GET K: IF K=0 THEN GOTO ${w}`); out.push(`${next()} GRAPHICS 0`); }
+    out.push(`${next()} END`);
+    const lastLoader = n - o.lstep;
+
+    /* colours first (read by the two FOR loops), then the video RAM */
+    const vals = [].concat(
+      o.cmode === 'line' ? rowFg : [],
+      o.cmode === 'mono' ? [] : lineBg,
+      pixels ? encode(bytes, o.format) : []);
+    let dn = o.dstart;
+    if (dn <= lastLoader) dn = (Math.floor(lastLoader / 100) + 1) * 100;
+    let cur = '', dataLines = 0, memEst = 0;
+    const flush = () => { out.push(`${dn} DATA ${cur}`); dataLines++; dn += o.lstep; cur = ''; };
+    for (const v of vals) {
+      const s = String(v);
+      if (cur && (`${dn} DATA ${cur},${s}`).length > o.maxlen) flush();
+      cur = cur ? cur + ',' + s : s;
+      memEst += 6 + (v < 0 ? 1 : 0);   /* number token + 4 bytes, comma, sign */
+    }
+    if (cur) flush();
+    out.forEach(l => { memEst += /^\d+ DATA /.test(l) ? 5 : l.length; });   /* line header + DATA token, loader lines roughly as text */
+    return { text: out.join('\n') + '\n', vals: vals.length, dataLines, lastLine: dn - o.lstep, memEst };
+  }
+
+  /* The 36-character kernel changes COLUBK only every second line and swaps its two kernels each
+     frame, so a line shows bk[y] in one frame and its neighbour in the other; a lit pixel is drawn
+     in only one of two frames. "Simulate the TV" mixes both frames in linear light. */
+  const lin = c => Math.pow(c / 255, 2.2), unlin = v => Math.round(255 * Math.pow(Math.max(0, Math.min(1, v)), 1 / 2.2));
+  const mix = (a, b) => [unlin((lin(a[0]) + lin(b[0])) / 2), unlin((lin(a[1]) + lin(b[1])) / 2), unlin((lin(a[2]) + lin(b[2])) / 2)];
+  const css = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+  function bgPair(lineBg, y) {
+    const base = y - (y % ROW_UNIT), sub = y % ROW_UNIT;
+    if (sub === ROW_UNIT - 1 || sub === 0) return [lineBg[y], lineBg[y]];
+    const a = sub % 2 ? sub : sub - 1, b = sub % 2 ? sub - 1 : sub;   /* kernel A uses odd entries, kernel B even ones */
+    return [lineBg[base + a], lineBg[base + b]];
+  }
+  function drawPreview(lit, g, o, rowFg, lineBg) {
+    const cv = $('screen'), Z = 3;
+    const W = Math.round(VW * o.par * Z), H = g.vh * Z;
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const ctx = cv.getContext('2d');
+    const xs = []; for (let x = 0; x <= VW; x++) xs.push(Math.round(x * o.par * Z));
+    const nx = VISX.length;
+    const rowOf = new Map(g.visY.map((y, j) => [y, j]));
+    for (let y = 0; y < g.vh; y++) {
+      const row = (y / ROW_UNIT) | 0;
+      let back, front;
+      if (o.tvblend) {
+        const [a, b] = bgPair(lineBg, y), ca = palRGB(o.tv, a), cb = palRGB(o.tv, b);
+        back = mix(ca, cb); front = mix(palRGB(o.tv, rowFg[row]), back);
+      } else {
+        back = palRGB(o.tv, lineBg[y]); front = palRGB(o.tv, rowFg[row]);
+      }
+      ctx.fillStyle = css(back); ctx.fillRect(0, y * Z, W, Z);
+      const j = rowOf.get(y);
+      if (j === undefined) continue;
+      ctx.fillStyle = css(front);
+      for (let i = 0; i < nx; i++) if (lit[j * nx + i]) { const x = VISX[i]; ctx.fillRect(xs[x], y * Z, xs[x + 1] - xs[x], Z); }
+    }
+  }
+
+  function drawThumb() {
+    const c = $('thumb'), ctx = c.getContext('2d'), img = state.img;
+    ctx.clearRect(0, 0, c.width, c.height);
+    if (!img) return;
+    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    const s = Math.min(c.width / w, c.height / h);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, (c.width - w * s) / 2, (c.height - h * s) / 2, w * s, h * s);
+  }
+
+  const fmtN = n => n.toLocaleString('en-US');
+  let last = null;
+
+  function render() {
+    if (!state.img) return;
+    const o = readOpts(), g = geometry(o.mode);
+    const rgba = sampleSource(state.img, o, g), tone = toneCurve(o);
+    const nx = VISX.length, ny = g.visY.length;
+    let lit, rowFg, lineBg;
+    if (o.cmode === 'mono') {
+      const vals = new Float32Array(nx * ny), off = new Uint8Array(nx * ny);
+      g.visY.forEach((y, j) => {
+        for (let i = 0; i < nx; i++) {
+          const p = (y * VW + VISX[i]) * 4, k = j * nx + i;
+          if (rgba[p + 3] < 128) { off[k] = 1; continue; }   /* letterbox / transparent: never lit */
+          vals[k] = tone((0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2]) / 255);
+        }
+      });
+      lit = dither(vals, off, nx, ny, o);
+      rowFg = new Array(g.rows).fill(o.fg);
+      lineBg = new Array(o.mode === 'full' ? NUM_BG : g.rows * ROW_UNIT).fill(o.bg);
+    } else {
+      ({ lit, fg: rowFg, bg: lineBg } = colourConvert(rgba, g, o, tone));
+    }
+    const bytes = packVram(lit, g);
+    const prog = buildProgram(bytes, g, o, rowFg, lineBg);
+    drawPreview(lit, g, o, rowFg, lineBg);
+
+    let litCount = 0; for (const b of lit) litCount += b;
+    const textBytes = new Blob([prog.text]).size;
+    $('out').value = prog.text;
+    $('lname').textContent = o.fname + '.BAS';
+    $('howname').textContent = o.fname + '.BAS';
+    $('howenter').textContent = `ENTER "E1:${o.fname}.BAS"`;
+    $('capmode').textContent = `${o.mode === 'full' ? 'GRAPHICS 8+16' : 'GRAPHICS 8 + text window'} · ${VW} × ${g.vh}`;
+    $('captv').textContent = `${o.tv} palette · pixel aspect ${o.par.toFixed(2)}`;
+    $('stats').innerHTML = [
+      `<li><b>${fmtN(litCount)}</b> of ${fmtN(nx * ny)} pixels lit</li>`,
+      `<li><b>${fmtN(prog.vals)}</b> DATA values in ${prog.dataLines} lines</li>`,
+      `<li>text file <b>${fmtN(textBytes)}</b> bytes</li>`,
+      `<li>about <b>${fmtN(Math.round(prog.memEst / 100) * 100)}</b> bytes of program memory</li>`
+    ].join('');
+    const warns = [];
+    if (textBytes > 30000) warns.push('The text file is close to or above the size of a 32 KiB SaveKey drive (E1). Use the compact format, a larger drive, or fewer lit pixels.');
+    if (prog.memEst > 60000) warns.push('The program may not fit into the 64512 bytes of TinyELF Basic memory.');
+    if (prog.lastLine > 65000) warns.push('Line numbers run past 65000. Lower the line step or the DATA start line.');
+    $('warn').textContent = warns.join(' ');
+    $('warn').hidden = warns.length === 0;
+    last = { text: prog.text, name: o.fname + '.BAS' };
+  }
+
+  let timer = 0;   /* "Colour per line" takes a moment to compute, so slider drags are debounced */
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(() => requestAnimationFrame(render), $('cmode').value === 'line' ? 90 : 0); };
+
+  const MODE_HINT = {
+    line: 'Every scanline gets its own background colour (POKE 1024+Y) and every text row of 12 lines one pixel colour (POKE 256+R), both picked from the picture. Dithering mixes the two colours of each line.',
+    mono: 'Pixels use one colour on all rows (POKE 256+R), the background one colour on all lines (POKE 1024+Y). Rows are the 8 luminances, columns the 16 hues.',
+    bgonly: 'No pixels: each scanline just gets the background colour closest to the picture. Gives smooth colour bands and a very short program.'
+  };
+  function syncMode() {
+    const m = $('cmode').value;
+    $('monopick').hidden = m !== 'mono';
+    $('cpalrow').hidden = m === 'mono';
+    $('dither').disabled = $('thresh').disabled = m === 'bgonly';
+    $('format').disabled = m === 'bgonly';
+    $('cmodehint').textContent = MODE_HINT[m];
+  }
+  $('cmode').addEventListener('input', () => { syncMode(); schedule(); });
+  ['cpal', 'tvblend'].forEach(id => $(id).addEventListener('input', schedule));
+
+  /* ---- colour picker ---- */
+  function buildPalette() {
+    const tv = $('tv').value, p = $('palette');
+    p.innerHTML = '';
+    for (let lum = 0; lum < 8; lum++) for (let hue = 0; hue < 16; hue++) {
+      const v = hue * 16 + lum * 2, b = document.createElement('button');
+      b.type = 'button'; b.style.background = palColor(tv, v);
+      b.title = `${v} · ${hex2(v)}`; b.setAttribute('aria-label', `colour ${v}`);
+      b.dataset.v = v;
+      if (v === state[state.target]) b.classList.add('sel');
+      p.appendChild(b);
+    }
+  }
+  function syncPicks() {
+    const tv = $('tv').value;
+    $('fgsw').style.background = palColor(tv, state.fg); $('fgval').textContent = `${state.fg} · ${hex2(state.fg)}`;
+    $('bgsw').style.background = palColor(tv, state.bg); $('bgval').textContent = `${state.bg} · ${hex2(state.bg)}`;
+    $('pickfg').setAttribute('aria-pressed', state.target === 'fg');
+    $('pickbg').setAttribute('aria-pressed', state.target === 'bg');
+    buildPalette();
+  }
+  $('palette').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    state[state.target] = +b.dataset.v; syncPicks(); schedule();
+  });
+  $('pickfg').addEventListener('click', () => { state.target = 'fg'; syncPicks(); });
+  $('pickbg').addEventListener('click', () => { state.target = 'bg'; syncPicks(); });
+
+  /* ---- inputs ---- */
+  const outputs = { par: v => (+v).toFixed(2), bright: v => v, contrast: v => v, gamma: v => (+v).toFixed(2), thresh: v => v };
+  for (const id of Object.keys(outputs)) {
+    $(id).addEventListener('input', () => { $(id + 'v').textContent = outputs[id]($(id).value); schedule(); });
+  }
+  ['mode', 'fit', 'dither', 'invert', 'format', 'waitkey', 'lstart', 'lstep', 'dstart', 'maxlen'].forEach(id => $(id).addEventListener('input', schedule));
+  $('fname').addEventListener('input', () => { state.nameEdited = true; schedule(); });
+  $('tv').addEventListener('input', () => {
+    const p = $('tv').value === 'PAL' ? 1.9 : 1.6;
+    $('par').value = p; $('parv').textContent = p.toFixed(2);
+    syncPicks(); schedule();
+  });
+  document.querySelectorAll('[data-par]').forEach(b => b.addEventListener('click', () => {
+    $('par').value = b.dataset.par; $('parv').textContent = (+b.dataset.par).toFixed(2); schedule();
+  }));
+
+  /* ---- loading pictures ---- */
+  function useImage(img, name, info, isSample) {
+    state.img = img; state.isSample = isSample;
+    if (!state.nameEdited) $('fname').value = sanitizeName(name);
+    $('srcinfo').textContent = info;
+    drawThumb(); schedule();
+  }
+  function loadFile(file) {
+    if (!file || !file.type.startsWith('image/')) { $('srcinfo').textContent = 'That file is not an image. Choose a PNG, JPEG, GIF or WebP file.'; return; }
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      useImage(img, file.name.replace(/\.[^.]*$/, ''), `${file.name} · ${img.naturalWidth} × ${img.naturalHeight}`, false);
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => { $('srcinfo').textContent = `${file.name} could not be read as an image.`; URL.revokeObjectURL(url); };
+    img.src = url;
+  }
+  $('file').addEventListener('change', e => { state.nameEdited = false; loadFile(e.target.files[0]); e.target.value = ''; });
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', e => { state.nameEdited = false; loadFile(e.dataTransfer.files[0]); });
+  document.addEventListener('paste', e => {
+    const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+    if (item) { state.nameEdited = false; loadFile(item.getAsFile()); }
+  });
+
+  function makeSample() {
+    const c = document.createElement('canvas'); c.width = 464; c.height = 362;
+    const x = c.getContext('2d');
+    const sky = x.createLinearGradient(0, 0, 0, 362);   /* a sunset, so every colour mode has something to show */
+    sky.addColorStop(0, '#0b1240'); sky.addColorStop(0.35, '#4b2a7a'); sky.addColorStop(0.62, '#e0603a'); sky.addColorStop(0.8, '#ffc04a');
+    x.fillStyle = sky; x.fillRect(0, 0, 464, 362);
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    x.fillStyle = '#fff';
+    for (let i = 0; i < 70; i++) { const r = rnd() * 1.6 + 0.6; x.beginPath(); x.arc(rnd() * 464, rnd() * 130, r, 0, 7); x.fill(); }
+    const sun = x.createRadialGradient(318, 190, 8, 318, 205, 92);
+    sun.addColorStop(0, '#fffbe0'); sun.addColorStop(1, '#ff8a2a');
+    x.fillStyle = sun; x.beginPath(); x.arc(318, 205, 80, 0, 7); x.fill();
+    x.fillStyle = '#3a1d4a'; x.beginPath(); x.moveTo(0, 362); x.lineTo(0, 250);
+    for (let i = 0; i <= 464; i += 29) x.lineTo(i, 246 + Math.sin(i / 37) * 26 + Math.cos(i / 13) * 9);
+    x.lineTo(464, 362); x.fill();
+    x.fillStyle = '#12091a'; x.beginPath(); x.moveTo(0, 362); x.lineTo(0, 300);
+    for (let i = 0; i <= 464; i += 23) x.lineTo(i, 300 + Math.sin(i / 21 + 1) * 14);
+    x.lineTo(464, 362); x.fill();
+    x.fillStyle = '#ffffff'; x.font = '700 70px "Chakra Petch", "Bahnschrift", sans-serif'; x.fillText('TinyELF', 22, 92);
+    x.font = '600 30px "Chakra Petch", "Bahnschrift", sans-serif'; x.fillText('BASIC', 26, 130);
+    return c;
+  }
+  const loadSample = () => { state.nameEdited = false; useImage(makeSample(), 'SAMPLE', 'Sample image loaded · replace it with your own picture', true); };
+  $('sample').addEventListener('click', loadSample);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (state.isSample) { state.img = makeSample(); drawThumb(); schedule(); } });
+
+  /* ---- copy / download ---- */
+  $('copy').addEventListener('click', () => {
+    if (!last) return;
+    const done = () => { $('copy').textContent = 'Copied'; setTimeout(() => { $('copy').textContent = 'Copy listing'; }, 1500); };
+    const fallback = () => { const t = $('out'); t.focus(); t.select(); $('copy').textContent = 'Press Ctrl+C'; setTimeout(() => { $('copy').textContent = 'Copy listing'; }, 2500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(last.text).then(done, fallback);
+    else fallback();
+  });
+  if (framed) { $('download').hidden = true; $('dlnote').hidden = false; }
+  $('download').addEventListener('click', () => {
+    if (!last) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([last.text], { type: 'text/plain' }));
+    a.download = last.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  });
+
+  syncPicks();
+  syncMode();
+  loadSample();
+})();
+</script>
+</body>
+</html>

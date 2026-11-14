@@ -1,4 +1,9 @@
+/.vscode/
 /36 char/
 /36 char full/
 /TinyBasic/
-main.bin
+/TBL/
+/boards/
+/bak/
+/docs/
+*.bin
