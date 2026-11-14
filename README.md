@@ -1,90 +1,104 @@
-TinyELF Basic is a new experimental BASIC interpreter environment running entirely on the microcontroller of modern Atari 2600 flash cartridges (UnoCart/PlusCart/Chameleon Cart). It brings a classic 1970s-era TinyBasic interpreter to the VCS while using a custom 36-character wide display kernel.
+# TinyELF Basic
 
+**A real BASIC home computer on the Atari 2600.**
 
-**Display Kernel**
+TinyELF Basic is a BASIC interpreter that runs as an ELF program on the ARM microcontroller of a PlusCart or UnoCart. The ARM runs the interpreter and feeds the 2600's 6507 the instructions to draw the screen and read the joystick ports. You type on a real PS/2 keyboard (through the KeyPortari) and save your programs on a SaveKey or AtariVox.
 
-The video system is powered by a version of @Omegamatrix's 36-Character kernel ported to ELF (https://forums.atariage.com/topic/317204-36-character-kernel-redux).
+The language core is Stefan Lenz's [Basic2](https://github.com/slviajero/tinybasic), a modern C descendant of Palo Alto Tiny BASIC.
 
-The kernel provides:
-- 36-column text mode
-- Background colors can be changed every graphics line
-- Text colors can set for every text row
-- Character set in RAM
-- Dedicated screen RAM
- 
+```
+TinyELF Basic v0.20 65535 Bytes Free
+READY
+```
 
-**Input Device**
+## Features
 
-TinyELF Basic is using the KeyPortari as input device. A new direct ASCII protocol is implemented for TinyELF Basic. Maybe in the future an expansion board for the KeyPortari can be used to store the basic programs to an audio port.
+- **65,535 bytes** for programs and variables, 32-bit integer maths (no floating point)
+- **Text:** 36 × 14 characters, or 18 large columns in `GRAPHICS 1`
+- **Graphics:** `GRAPHICS 3` (40 × 14 blocks) and `GRAPHICS 8` (145 × 181 pixels) with `PLOT` and `DRAWTO`, optionally with a 3-row text window
+- **Colour:** text colour per row, background colour per scanline, character set in RAM (via `POKE`)
+- **Sound:** both TIA audio channels via `POKE`
+- **Controllers:** joystick and paddles with `STICK`, `STRIG` and `PTRIG`
+- **Storage:** `SAVE`/`LOAD` and `LIST`/`ENTER` on a SaveKey or AtariVox, with an Atari DOS 2.x-style file system: drives `E1`–`E8`, 8.3 file names, up to 64 files per drive, `CATALOG`, `FORMAT`, `DELETE`
+- **Language:** strings with `LEFT$`, `MID$`, `RIGHT$` & co., long variable names, `DATA`/`READ`, `DEF FN`, `ON … GOTO`, two-dimensional and string arrays, `MILLIS` and `DELAY`, `ESC` to break, so classic type-ins are easy to port
 
+## What you need
 
-**BASIC Interpreter**
+- an Atari 2600 or 7800
+- a **PlusCart** or **UnoCart** with **UCA firmware v2.3.32** or newer
+- a **KeyPortari** in both joystick ports, set to the **7-bit ASCII** protocol, and a PS/2 keyboard (or a USB keyboard that still speaks PS/2)
+- optional: a **SaveKey**, **SaveKey Plus** or **AtariVox** for storage, in the KeyPortari's right pass-through port
 
-The interpreter is derived from the historical 1970s TinyBasic (http://ittybittycomputers.com/IttyBitty/TinyBasic) rewritten in C.
+## Getting started
 
-It currently implements the original 70s command set.
- 
+1. Download `TinyELF-Basic-v0.20.bin` and the manual from the [latest release](https://github.com/Al-Nafuur/TinyELF-Basic/releases/latest).
+2. Copy the `.bin` to your PlusCart or UnoCart like any other ROM and start it from the menu.
+3. Type a program:
 
-**Possible future additions:**
+   ```
+   10 PRINT "HELLO ATARI"
+   20 GOTO 10
+   RUN
+   ```
 
-- "POKE", "PEEK" access to kernel's screen RAM, color RAM, charset RAM, and TIA registers (audio)
-- Graphics commands in basic to "draw" to the screen.
-- Optional upgrade to the more capable "Basic2" interpreter (https://github.com/slviajero/tinybasic/tree/main/Basic2)
+   Press `ESC` to stop it.
+4. Save it with `SAVE "E1:HELLO.BAS"` (after `FORMAT "E1:"` on a fresh SaveKey) and list the drive with `CATALOG "E1:"`.
 
+## Manual
 
-**Hardware & Compatibility**
+The [user manual](MANUAL.md) describes every statement, the graphics modes, the memory map for `PEEK` and `POKE`, the sound registers and the file system. A print-ready PDF is attached to each release.
 
-TinyELF Basic runs as an ELF ROM on:
-- PlusCart
-- UnoCart
-- Chameleon Cart (untested)
-- Stella / Gopher2600 emulators (input limited: no KeyPortari protocol yet)
+## Example programs
 
+About 100 ready-to-run listings are in [`examples/`](examples):
 
-**Memory Model**
+| Folder | Contents |
+|---|---|
+| [`14games`](examples/14games) | 53 classics from *BASIC Computer Games* and the roguelike *Dungeons of Ekileugor* |
+| [`20demos`](examples/20demos) | small graphics demos |
+| [`30tutorial`](examples/30tutorial) | short programs that show one feature each |
+| [`40benchmarks`](examples/40benchmarks) | classic BASIC benchmarks |
 
-The interpreter and screen system run entirely inside the cartridge MCU RAM. Current layout:
+Copy a listing to your SaveKey and load it with `ENTER`.
 
-- ~3 KB Screen RAM
-- ~1 KB Character Set RAM
-- ~170 B Color RAM
-- 32 KB BASIC RAM (Chameleon will have less! maybe 16K or 24K)
+## SaveKey-Manager
 
-Note: UnoCart/PlusCart will later gain *full 64 KB BASIC RAM* via CCRAM (Chameleon has no CCRAM).
- 
+[SaveKey-Manager](https://al-nafuur.github.io/SaveKey-Manager/) is a browser app (PWA) to back up, format and fill your SaveKey from a PC. It connects through the [PicoBridge](https://al-nafuur.github.io/SaveKey-Manager/firmware/pico-bridge), a Raspberry Pi Pico working as a USB-to-I²C bridge. It formats TinyELF drives, uploads, downloads and edits programs, and copies the example programs straight from this repository through its Public Library.
 
-**Execution Model**
+## Tools
 
-The current BASIC interpreter "loop" runs about 10 times per frame (with plenty of headroom, up to ~220 tokens per frame should be possible depending on the parser used). After each slice, control returns to the ELF loop to wait for end-of-overblank and render the next frame.
- 
+[`tools/TinyELF-Image-Converter.html`](tools/TinyELF-Image-Converter.html) turns a picture into a TinyELF Basic program that draws it in `GRAPHICS 8`. Open the file in a browser.
 
-**Origins & Discussion**
+## Emulation
 
-This project was first proposed by me in the VCS-ELF Club on AtariAge:
-https://forums.atariage.com/topic/385281-elf-basic-interpreter-for-the-2600
- 
+TinyELF Basic runs in **Gopher2600** (recent version, with `-keyportari ASCII -right SAVEKEY`), with 48 KB of program memory. Gopher2600 emulates only one 32 KB SaveKey (drive `E1`), and storage commands can fail there with error 23 or 20.
 
-**Summary**
+Stella cannot run TinyELF Basic: its ELF support emulates a Cortex-M0, TinyELF Basic needs the Cortex-M4 of the PlusCart and UnoCart.
 
-TinyELF Basic is a new experiment in “cartridge-resident computing” for the Atari 2600:
+## Building
 
-- A real BASIC interpreter
-- A wide-character text display
-- Keyboard input via KeyPortari
-- Running mostly on the cartridge MCU
-- Programmable by the user in "real time"
+The release is built with **GCC 14.2** (Arm GNU Toolchain 14.2.Rel1). Other GCC versions give a different binary; GCC 15 does not compile the sources yet.
 
+```
+arm-none-eabi-gcc -r -mlong-calls -fno-exceptions -fno-builtin-memmove -march=armv7-m -Os -Wall \
+  -Wl,-T,tinyelf.ld *.c -o TinyELF-Basic-v0.20.bin -lgcc
+```
 
-**Call to Action - Ideas Wanted!**
+This gives a byte-identical copy of the released `TinyELF-Basic-v0.20.bin`. The linker script `tinyelf.ld` keeps all variables out of `.bss`, so the whole 64 KB CCM RAM of the STM32 is free for BASIC programs.
 
-This is an early experimental release, and I would love community input:
-- Propose a better Basic interpreter (should be C-code based)
-- New BASIC commands?
-- Graphics mode ideas?
-- Preferred syntax for POKE?
-- Editor improvements?
-- Charset tweaks?
-- Suggestions for sound/music integration?
-- Or simply: try the ROM and break things!
+## Credits
 
-If anyone wants to fork, optimize, or experiment with the interpreter or display kernel, please do, this project thrives on creative input.
+- **Stefan Lenz**: the Basic2 interpreter and the manual this one is derived from
+- **Li-Chen Wang**: Palo Alto Tiny BASIC, the ancestor of the core language
+- **Omegamatrix**: the 36-character display kernel and its font, published on AtariAge ([36 Character Kernel Redux](https://forums.atariage.com/topic/317204-36-character-kernel-redux)). TinyELF Basic reimplements his kernel in C on the ARM.
+- **Alex Herbert** and **Thomas Jentzsch**: the SaveKey/AtariVox I²C driver that the TinyELF driver is ported from
+- **Zachary Scolaro**: vcsLib and the ELF support in the UCA firmware
+- **JetSetIlly**: Gopher2600, used for testing
+
+## Licence
+
+TinyELF Basic is based on Stefan Lenz's Basic2, which is licensed under the GNU General Public License v3, and is distributed under the same licence. The example programs in `examples/` keep their own licences, see the `LICENSE-*.txt` files there.
+
+## Discussion
+
+- [TinyELF Basic thread on AtariAge](https://forums.atariage.com/topic/386052-tinyelf-basic-for-the-atari-2600/)
