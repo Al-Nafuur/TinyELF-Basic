@@ -1,0 +1,81 @@
+TinyELF Basic
+Copyright (C) 2025-2026 W. Stubig (Al-Nafuur)
+
+TinyELF Basic is free software, distributed under the GNU General
+Public License version 3, see LICENSE. It comes WITHOUT ANY WARRANTY.
+
+TinyELF Basic is built on, and contains parts of, the following work
+by other people.
+
+
+Basic2 by Stefan Lenz
+https://github.com/slviajero/tinybasic
+
+  The BASIC interpreter: basic.h, builtin.h, hardware.h, language.h,
+  runtime.h and the interpreter parts of main.c and runtime.c,
+  licensed under the GNU General Public License version 3 as stated
+  in the source headers. Basic2 descends from Palo Alto Tiny BASIC
+  by Li-Chen Wang (1976).
+
+
+36-character display kernel by Omegamatrix
+https://forums.atariage.com/topic/317204-36-character-kernel-redux
+
+  The 36-column text display and its font, published on AtariAge.
+  TinyELF Basic re-implements the kernel in C on the ARM (main.c).
+
+
+AtariVox/SaveKey I2C driver (i2c_v2.3.inc)
+by Alex Herbert (2004), optimisations by Thomas Jentzsch (2006/2008)
+
+  i2c_savekey.c is a port of this 6507 driver to the ARM.
+
+
+vcsLib by Zachary Scolaro
+https://github.com/Al-Nafuur/United-Carts-of-Atari
+
+  vcsLib.h is copied unchanged from the UCA firmware for the PlusCart
+  and UnoCart, licensed under the GNU General Public License version 3.
+
+
+UTFS by CLI Systems LLC
+https://github.com/clisystems/utfs
+
+  utfs.c and utfs.h, licensed under the MIT License:
+
+  Copyright (c) 2025 CLI Systems LLC <contact@clisystems.com>
+
+  Permission is hereby granted, free of charge, to any person obtaining
+  a copy of this software and associated documentation files (the
+  "Software"), to deal in the Software without restriction, including
+  without limitation the rights to use, copy, modify, merge, publish,
+  distribute, sublicense, and/or sell copies of the Software, and to
+  permit persons to whom the Software is furnished to do so, subject to
+  the following conditions:
+
+  The above copyright notice and this permission notice shall be
+  included in all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+  CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+  TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+Example programs (examples/)
+
+  The listings keep their own licences:
+
+  - examples/LICENSE-tinybasic.txt: BSD 3-Clause License, Stefan Lenz
+    (the programs taken from the Basic2 repository)
+  - examples/LICENSE-ekileugor.txt: BSD 3-Clause License, Chris Pressey,
+    Cat's Eye Technologies (Dungeons of Ekileugor)
+
+
+Trademarks
+
+  Atari, Atari 2600 and Atari 7800 are trademarks of Atari Interactive,
+  Inc. TinyELF Basic is not affiliated with or endorsed by Atari.
