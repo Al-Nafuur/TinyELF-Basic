@@ -1641,7 +1641,7 @@ const bworkfunction_t workfunctions[] PROGMEM = {
 /* errors and messages */
 const char mfile[]    	PROGMEM = "file.bas";
 const char mprompt[]	PROGMEM = "";
-const char mgreet[]		PROGMEM = "TinyELF Basic v0.20 "; /* + free bytes, see displaybanner() */
+const char mgreet[]		PROGMEM = "TinyELF Basic v0.21 "; /* + free bytes, see displaybanner() */
 const char mline[]		PROGMEM = "LINE";
 const char mnumber[]	PROGMEM = "NUMBER";
 const char mvariable[]	PROGMEM = "VARIABLE";

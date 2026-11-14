@@ -84,7 +84,7 @@ arm-none-eabi-gcc -r -mlong-calls -fno-exceptions -fno-builtin-memmove -march=ar
   -Wl,-T,tinyelf.ld *.c -o TinyELF-Basic-v0.20.bin -lgcc
 ```
 
-This gives a byte-identical copy of the released `TinyELF-Basic-v0.20.bin`. The linker script `tinyelf.ld` keeps all variables out of `.bss`, so the whole 64 KB CCM RAM of the STM32 is free for BASIC programs.
+Run on a checkout of the tag `v0.20` (`git checkout v0.20`), this gives a byte-identical copy of the released `TinyELF-Basic-v0.20.bin`. The linker script `tinyelf.ld` keeps all variables out of `.bss`, so the whole 64 KB CCM RAM of the STM32 is free for BASIC programs.
 
 ## Credits
 

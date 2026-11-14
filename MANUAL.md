@@ -1,6 +1,6 @@
 # TinyELF Basic – User Manual
 
-**TinyELF Basic v0.20**
+**TinyELF Basic v0.21**
 
 TinyELF Basic is a BASIC interpreter that runs entirely on the microcontroller of a modern Atari 2600
 flash cartridge (PlusCart, UnoCart) as an ELF program. It drives a 36-character text kernel and adds
@@ -67,7 +67,7 @@ The display is a 36-column text kernel (ported from Omegamatrix's 36-character k
 At start-up TinyELF Basic prints its banner, e.g.
 
 ```
-TinyELF Basic v0.20 65535 Bytes Free
+TinyELF Basic v0.21 65535 Bytes Free
 ```
 
 On a PlusCart or UnoCart 65535 bytes of RAM are available for the program and its variables. `SIZE` shows the remaining free memory.
