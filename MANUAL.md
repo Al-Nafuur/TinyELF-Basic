@@ -669,12 +669,25 @@ ENTER "E1:HELLO.LST"     read the text back in
 * Lines without a leading line number are ignored; lines starting with `#` are skipped.
 * LF, CR or CRLF line endings all work. A line may be up to about 250 characters.
 
-### 8.7 Practical notes
+### 8.7 Autostart with `E1:AUTORUN.BAS`
+
+A program saved as `AUTORUN.BAS` on drive E1 starts by itself when TinyELF Basic boots, like `AUTORUN.SYS` on an Atari DOS disk.
+
+```
+SAVE "E1:AUTORUN.BAS"
+```
+
+* At power-on the file is loaded and run instead of showing the start banner. When the program ends, `READY` appears and the program stays in memory.
+* Only drive E1 is checked, and the file has to be a `SAVE` file; a text file written with `LIST` does not start.
+* Without a SaveKey, on an unformatted drive or without the file, TinyELF Basic starts normally, without an error message.
+* `ESC` stops the program like any other. To get rid of the autostart, stop it and type `DELETE "E1:AUTORUN.BAS"`, or delete or rename the file with the SaveKey-Manager.
+
+### 8.8 Practical notes
 
 * While a storage command runs, the screen is blanked and shows a solid **pink/magenta** colour.
 * Formatted drives use the same on-disk format as the **SaveKey-Manager** PC tool. You can inspect, download and upload files with it.
 
-### 8.8 Error behaviour of the storage commands
+### 8.9 Error behaviour of the storage commands
 
 | Command | Error when it fails |
 |---------|---------------------|
@@ -734,7 +747,6 @@ Inside the handler `ERROR` used as a value is the error code. As with all error 
 ## 10. Known limitations
 
 * **No `OPEN`, `CLOSE`, `FDISK`** – the general file I/O set is not part of the current language profile.
-* **No autorun** – automatic loading of a program at power-on is currently disabled.
 * **No `COLOR` command** – colours are set by `POKE`, see [chapter 7](#7-memory-map-for-peek-and-poke).
 * **No pixel erase** in `PLOT`.
 * **`GRAPHICS` 2, 4–7, 9–11** are not implemented (error 16).
@@ -762,7 +774,7 @@ For readers who know Stefan's original `MANUAL.md`: the following parts **do not
 | Timers and events: `AFTER`, `EVERY`, `EVENT` | Not compiled in. |
 | Structured language: `WHILE/WEND`, `REPEAT/UNTIL`, `SWITCH/CASE`, `DO/DEND`, multiline `IF` | Not compiled in. |
 | BASIC 2 extensions: line editor (`EDIT`), `HELP` | Not compiled in. |
-| File I/O set: `OPEN`, `CLOSE`, `FDISK`, `@S` file status, POSIX/`autorun.bas` semantics | Replaced by the TinyELF filesystem ([chapter 8](#8-storage-drives-the-tinyelf-filesystem-list-and-enter)). |
+| File I/O set: `OPEN`, `CLOSE`, `FDISK`, `@S` file status, POSIX/`autorun.bas` semantics | Replaced by the TinyELF filesystem ([chapter 8](#8-storage-drives-the-tinyelf-filesystem-list-and-enter)); autostart with `E1:AUTORUN.BAS` ([section 8.7](#87-autostart-with-e1autorunbas)). |
 | Arduino I/O: `PINM`, `DWRITE`, `DREAD`, `AWRITE`, `AREAD`, `AZERO`, `LED`, `PULSE` | No such pins on the cartridge. |
 | `PLAY` (tone on a pin) | No pins; sound comes from the TIA audio registers, see [section 7.2](#72-sound). |
 | `USR`, `CALL`, and the low-level extension mechanism | Not compiled in. |

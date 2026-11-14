@@ -2170,26 +2170,18 @@ char autorun() {
     return 1;
   }
 #elif defined(STM32)
-  /* Disabled again - the TinyELF filesystem migration (tinyelf_fs.c) is
-     still being brought up and hasn't been hardware-verified yet even
-     via interactive commands, let alone this early-boot path (which was
-     ALREADY marked UNVERIFIED before that migration even started, and
-     got disabled once before this session for the exact same reason:
-     an early-boot xload("autoexec.bas") crash muddying whether the bug
-     is in the storage code or in running this call this early). Keep
-     this off until FORMAT/SAVE/LOAD/CATALOG are all confirmed working
-     interactively first - re-enable and test on its own after that,
-     the same way it was re-enabled (and then found to still crash) last
-     time, so at least it's a single, isolated variable to test instead
-     of two at once.
+  /* E1:AUTORUN.BAS - a program SAVEd under this name on the first SaveKey
+     drive is loaded and run at power-on, like AUTORUN.SYS on an Atari DOS
+     disk. No SaveKey, an unformatted one or no such file: nothing happens
+     and no error is shown (xload()'s quiet path only sets er). loop()
+     then starts the program (st == SRUN); the banner is skipped. */
   er = 0;
-  xload("autoexec.bas");
+  xload("E1:AUTORUN.BAS");
   if (er == 0) {
     st = SRUN;
     return 1;
   }
   er = 0;
-  */
 #endif
 
   /* nothing to autorun */
@@ -13098,9 +13090,9 @@ static void geteefilename(char *buffer) {
 /*
  	LOAD "En:name" - loads a program from a TinyELF drive (see sdload() in
  	i2c_savekey.h). f, if non-null, is used instead of
- 	parsing a filename from the token stream - used for the autoexec.bas
+ 	parsing a filename from the token stream - used for the E1:AUTORUN.BAS
  	boot load in autorun(), where the file quite normally doesn't exist
- 	yet (nobody's saved one) - error() prints its message immediately
+ 	(nobody's saved one) - error() prints its message immediately
  	(it's not just a flag-set), so for that caller a missing file must
  	NOT go through error() at all, or every boot would show "Error 20"
  	before the file has ever been saved once. Interactive LOAD (f==0)
