@@ -18,6 +18,12 @@
 #include "runtime.h"
 #include "basic.h"
 
+#ifdef STM32
+#include "vcsLib.h"
+#include "i2c_savekey.h"
+#include "tinyelf_fs.h"
+#endif
+
 /* the buildin BASIC programs, they appeare as a file system, on POSIX not implemented */
 #ifdef HASBUILDIN
 #define FBUFSIZE 32
@@ -508,6 +514,10 @@ uint16_t ins(char *b, uint16_t nb) {
   }  
 }
 
+#ifdef STM32
+static void eepromwrite(char c); /* real definition further down, next to sdlistopen()/sdlistclose() */
+#endif
+
 /*
  * outch() outputs one character to a stream
  * block oriented i/o like in radio not implemented here
@@ -555,6 +565,11 @@ void outch(char c) {
 #ifdef POSIXMQTT
   case OMQTT:
     mqttwrite(c); /* buffering for the PRINT command */
+    break;
+#endif
+#ifdef STM32
+  case OEEPROM:
+    eepromwrite(c); /* LIST "En:file" streaming - see the LIST/ENTER project plan */
     break;
 #endif
   default:
@@ -1215,16 +1230,23 @@ void bdelay(uint32_t t) {
   }
 }
 #else
-/* no millis() on this target - approximate via the real frame counter
-   (~16.7ms/frame at 60Hz). byield() itself fires per statement/character,
-   not per frame, so counting byield() calls has no fixed relationship
-   to elapsed wall-clock time - only get_frame_counter() does. */
+/* No clock on this target: time comes from the real frame counter.
+   TinyELF always runs at 60 Hz, also on PAL consoles (PAL60), so one frame
+   is 1000/60 ms. byield() itself fires per statement/character, not per
+   frame, so counting byield() calls has no fixed relationship to elapsed
+   time - only get_frame_counter() does. Waiting through byield() keeps
+   rendering frames, so the picture stays stable during DELAY. */
 void bdelay(uint32_t t) {
-  uint32_t frames = t / 17;
-  uint32_t target;
-  if (t > 0 && frames == 0) frames = 1;
-  target = get_frame_counter() + frames;
+  /* t ms -> frames, rounded up: t*60/1000 = t*3/50, split to avoid overflow */
+  uint32_t frames = (t / 50) * 3 + ((t % 50) * 3 + 49) / 50;
+  uint32_t target = get_frame_counter() + frames;
   while (get_frame_counter() < target) byield();
+}
+
+/* milliseconds since start, in steps of one frame (16.7 ms) - for MILLIS and @T */
+unsigned long millis() {
+  uint32_t f = get_frame_counter();
+  return (unsigned long)((f / 3) * 50 + ((f % 3) * 50) / 3);
 }
 #endif
 
@@ -1660,6 +1682,9 @@ void serialflush() { }
 #else 
 /* the blocking code only uses puchar and getchar */
 void serialbegin(){}
+#ifdef STM32
+extern _Bool inputActive; /* an INPUT waits for a line, set in main.c (bool there) */
+#endif
 char serialread() {
 #ifdef STM32
   static char linebuf[BUFSIZE] __attribute__((section(".data")));
@@ -1676,6 +1701,20 @@ char serialread() {
   while (1) {
     while (check_char() == '\0') { byield(); }
     ch = get_char();
+#if defined(STM32) && defined(BREAKCHAR)
+    /* the break key: in an INPUT it ends the line with the break character, which stops
+       the program, at the prompt it throws away the line typed so far */
+    if (ch == BREAKCHAR) {
+      linelen = 0;
+      put_char('\n');
+      if (inputActive) {
+        linebuf[linelen++] = BREAKCHAR;
+        linebuf[linelen++] = '\n';
+        break;
+      }
+      continue;
+    }
+#endif
     put_char(ch);
     if (ch == 8 || ch == 127) {
       if (linelen > 0) linelen--;
@@ -1687,9 +1726,11 @@ char serialread() {
   lineptr = 0;
   return linebuf[lineptr++];
 }
-char serialcheckch(){ if(check_char() != '\0') return 1; else return 0; }
+/* the waiting key itself, the statement loop compares it with BREAKCHAR */
+char serialcheckch(){ return check_char(); }
 uint16_t serialavailable() { if(check_char() != '\0') return 1; else return 0; }
-void serialflush() {}
+/* after a break: drop the break key */
+void serialflush() { if (check_char() != '\0') (void) get_char(); }
 #endif
 
 uint8_t serialstat(uint8_t c) {
@@ -2279,3 +2320,363 @@ char spistrbuf1[SPIRAMSBSIZE];
 char spistrbuf2[SPIRAMSBSIZE];
 #endif
 
+/*
+ * TinyELF Basic's I2C-SaveKey-backed storage - being moved out of main.c
+ * one function at a time (see project memory: the first attempt moved all
+ * FORMAT/SAVE/LOAD/DELETE/CATALOG functions at once and caused
+ * a real-hardware boot crash that only showed up after a full revert-and-
+ * retest; this time each function gets its own hardware smoke test before
+ * the next one moves).
+ */
+#ifdef STM32
+
+/* Splits a BASIC filename string into an 8-char name + 3-char ext, both
+   space-padded (classic DOS 8.3), for tinyelf_fs.c's disk-format layer -
+   keeps that layer free of any BASIC-filename-convention concerns. Not
+   NUL-terminated on output (matches the on-disk field widths exactly). */
+/* Pure string parsing, no I2C/vcsLib dependency at all - callers below
+   deliberately call this BEFORE entering the disabled-blanking window
+   (vcsEndOverblank()), not after, since it doesn't need to be in there
+   (same reasoning as tinyelf_format() moving its buffer building out -
+   see its comment in tinyelf_fs.c). No pacing needed here for that reason. */
+static void tinyelf_split_name(const char *name, char *name8, char *ext3) {
+  uint8_t i, j;
+
+  for (i = 0; i < TINYELF_NAME_LEN; i++) name8[i] = ' ';
+  for (i = 0; i < TINYELF_EXT_LEN; i++) ext3[i] = ' ';
+
+  i = 0;
+  while (name[i] != 0 && name[i] != '.') {
+    if (i < TINYELF_NAME_LEN) name8[i] = name[i];
+    i++;
+  }
+  if (name[i] == '.') {
+    i++;
+    j = 0;
+    while (name[i] != 0 && j < TINYELF_EXT_LEN) {
+      ext3[j] = name[i];
+      i++;
+      j++;
+    }
+  }
+}
+
+/* Parses a MANDATORY leading "En:" (n=1-8, case-insensitive) off name -
+   E1-E8, DOS 2.x style (see the E1-E8 drive-letter project plan). Returns
+   1 and fills *drive (0-7) and *rest (pointer just past the ':') on
+   success, 0 (missing/malformed prefix) otherwise. There is no default
+   drive - every SAVE/LOAD/DELETE/CATALOG/FORMAT must specify one
+   (confirmed with the user). Pure string parsing, no I2C at all - same
+   "hoist out of the disabled-blanking window" placement as
+   tinyelf_split_name() above, for the same reason. */
+static uint8_t tinyelf_parse_drive(const char *name, uint8_t *drive, const char **rest) {
+  char c0 = name[0], c1 = name[1], c2 = name[2];
+
+  if (c0 != 'E' && c0 != 'e') return 0;
+  if (c1 < '1' || c1 > '8') return 0;
+  if (c2 != ':') return 0;
+
+  *drive = (uint8_t)(c1 - '1');
+  *rest = &name[3];
+  return 1;
+}
+
+uint8_t sdsave(const char *name, const void *data, uint32_t len) {
+  char name8[TINYELF_NAME_LEN], ext3[TINYELF_EXT_LEN];
+  uint8_t ok, drive;
+  const char *rest;
+
+  if (!tinyelf_parse_drive(name, &drive, &rest)) return SD_NODRIVE;
+  tinyelf_split_name(rest, name8, ext3); /* no I2C needed - do this before entering the window */
+
+  vcsEndOverblank();
+  vcsWrite5(COLUBK, 0xa0);
+  vcsWrite5(VBLANK, 0); /* disable blanking */
+
+  if (!tinyelf_mount(drive)) {
+    i2c_release_bus();
+    vcsWrite5(VBLANK, 2);
+    vcsStartOverblank();
+    return SD_NODRIVE; /* no answer or not formatted */
+  }
+
+  ok = tinyelf_save(name8, ext3, data, len);
+
+  i2c_release_bus();
+  vcsWrite5(VBLANK, 2); /* enable blanking */
+  vcsStartOverblank();
+  return ok;
+}
+
+uint8_t sddelete(const char *name) {
+  char name8[TINYELF_NAME_LEN], ext3[TINYELF_EXT_LEN];
+  uint8_t ok, drive;
+  const char *rest;
+
+  if (!tinyelf_parse_drive(name, &drive, &rest)) return SD_NODRIVE;
+  tinyelf_split_name(rest, name8, ext3); /* no I2C needed - do this before entering the window */
+
+  vcsEndOverblank();
+  vcsWrite5(COLUBK, 0xa0);
+  vcsWrite5(VBLANK, 0); /* disable blanking */
+
+  if (!tinyelf_mount(drive)) {
+    i2c_release_bus();
+    vcsWrite5(VBLANK, 2);
+    vcsStartOverblank();
+    return SD_NODRIVE; /* no answer or not formatted */
+  }
+
+  ok = tinyelf_delete(name8, ext3);
+
+  i2c_release_bus();
+  vcsWrite5(VBLANK, 2); /* enable blanking */
+  vcsStartOverblank();
+  return ok;
+}
+
+uint8_t sdload(const char *name, void *data, uint32_t maxlen, uint32_t *outsize) {
+  char name8[TINYELF_NAME_LEN], ext3[TINYELF_EXT_LEN];
+  uint8_t ok, drive;
+  const char *rest;
+
+  if (!tinyelf_parse_drive(name, &drive, &rest)) return 0;
+  tinyelf_split_name(rest, name8, ext3); /* no I2C needed - do this before entering the window */
+
+  vcsEndOverblank();
+  vcsWrite5(COLUBK, 0xa0);
+  vcsWrite5(VBLANK, 0); /* disable blanking */
+
+  if (!tinyelf_mount(drive)) {
+    i2c_release_bus();
+    vcsWrite5(VBLANK, 2);
+    vcsStartOverblank();
+    return 0;
+  }
+
+  ok = tinyelf_load(name8, ext3, data, maxlen, outsize);
+
+  i2c_release_bus();
+  vcsWrite5(VBLANK, 2); /* enable blanking */
+  vcsStartOverblank();
+  return ok;
+}
+
+uint8_t sdformat(const char *drivespec, uint32_t sizeOverride) {
+  uint8_t drive;
+  const char *rest;
+
+  if (!tinyelf_parse_drive(drivespec, &drive, &rest)) return 0;
+
+  /* tinyelf_format() brackets vcsEndOverblank()/vcsStartOverblank() itself
+     (twice - once for its own drive scan, once for the real writes, see
+     its comment) - nothing else needed here. */
+  return tinyelf_format(drive, sizeOverride);
+}
+
+/* See runtime.h's comment - set for the whole time CATALOG's per-entry loop
+   in main.c prints between sdcatalogopen()/sdcatalognext() calls, so
+   bloop() knows not to render a frame while we're outside overblank. */
+uint8_t i2cWindowOpen = 0;
+
+uint8_t sdcatalogopen(const char *drivespec) {
+  uint8_t drive, ok;
+  const char *rest;
+
+  if (!tinyelf_parse_drive(drivespec, &drive, &rest)) return 0;
+
+  vcsEndOverblank();
+  vcsWrite5(COLUBK, 0xa0);
+  vcsWrite5(VBLANK, 0); /* disable blanking */
+  i2cWindowOpen = 1;
+
+  ok = tinyelf_mount(drive);
+  if (!ok) {
+    i2cWindowOpen = 0;
+    i2c_release_bus();
+    vcsWrite5(VBLANK, 2);
+    vcsStartOverblank();
+  }
+  return ok;
+}
+
+uint8_t sdcatalognext(uint32_t *pos, char *namebuf, uint32_t *size) {
+  char name8[TINYELF_NAME_LEN], ext3[TINYELF_EXT_LEN];
+  uint8_t first = (*pos == 0);
+
+  /* See the COLUBK-ordering note that used to live here (project memory
+     has the full story: a real hardware boot crash from stretching the
+     gap between two vcsLib calls across the caller's printing). Kept
+     simple here since tinyelf_dir_next() itself does no vcsLib calls at
+     all (unlike the old eedir_scan_next(), it doesn't need the
+     precharge/progress writes either - each call is one fixed-size,
+     byte-addressed directory read, not an open-ended scan). */
+  if (!first) {
+    vcsWrite5(COLUBK, (uint8_t)(0xa0 + ((*pos >> 2) & 0x0f))); /* visible progress */
+  }
+
+  if (!tinyelf_dir_next(pos, name8, ext3, size)) {
+    i2cWindowOpen = 0;
+    i2c_release_bus();
+    vcsWrite5(VBLANK, 2); /* enable blanking */
+    vcsStartOverblank();
+    return 0;
+  }
+
+  /* Reassemble "NAME.EXT", trimmed - NOT strncpy()/memcpy() (see
+     i2c_savekey.h's sdcatalognext() history for why: real libc string
+     functions aren't on this ELF loader's resolved-symbol whitelist and
+     cause an immediate boot crash). EEDIR_MAX_FILENAME is 12 (8+1+3) so
+     this always fits main.c's namebuf. */
+  {
+    uint8_t i, k = 0;
+    vcsJmp3(); vcsNop2n(200); /* plain ARM work below, no vcsLib call in the loops themselves */
+    for (i = 0; i < TINYELF_NAME_LEN && name8[i] != ' '; i++) namebuf[k++] = name8[i];
+    if (ext3[0] != ' ' || ext3[1] != ' ' || ext3[2] != ' ') {
+      namebuf[k++] = '.';
+      for (i = 0; i < TINYELF_EXT_LEN && ext3[i] != ' '; i++) namebuf[k++] = ext3[i];
+    }
+    namebuf[k] = 0;
+  }
+  return 1;
+}
+
+uint32_t sdcatalogfree(uint32_t pos) {
+  (void)pos; /* free space is a VTOC-wide count now, not scan-position-dependent */
+  return tinyelf_free_bytes();
+}
+
+uint32_t sdcatalogsize(void) {
+  return tinyelf_capacity_bytes();
+}
+
+/* ---- LIST "En:file" streaming - see the LIST/ENTER project plan.
+
+   Characters are collected into a sector-sized chunk and written with ONE
+   tinyelf_save_chunk() per full sector (the last, partial one at close).
+
+   The collecting buffer is ibuffer (the interactive command line, 256
+   bytes, always >= tinyelf_chunk_size()) on purpose, NOT a new static
+   array: an earlier attempt with a separate 256-byte static buffer here
+   crashed the board at boot. The crashing builds all had a .bss of
+   65576-65580 bytes while every bootable build had <= 65320, i.e. the
+   crash correlates with .bss growing past 65536 (64 KiB) - the exact
+   mechanism (probably a limit in the ELF loader) is unconfirmed, so keep
+   the total .bss under 65536 (check `arm-none-eabi-size`) and don't add
+   big statics. By the time the caller (xlist() in main.c) returns, the
+   original command line in ibuffer is gone, so xlist() resets it the same
+   way xenter() does.
+
+   eepromStreamCap == 0 means "no stream open"; eepromStreamLen ==
+   EEPROM_STREAM_FAILED means a chunk write failed (further characters are
+   dropped, sdlistclose() reports the failure). */
+#define EEPROM_STREAM_FAILED 0xFFFFu
+static uint16_t eepromStreamLen = 0;
+static uint16_t eepromStreamCap = 0;
+
+uint8_t sdlistopen(const char *name) {
+  char name8[TINYELF_NAME_LEN], ext3[TINYELF_EXT_LEN];
+  uint8_t drive;
+  const char *rest;
+
+  if (!tinyelf_parse_drive(name, &drive, &rest)) return 0;
+  tinyelf_split_name(rest, name8, ext3); /* no I2C needed - do this before entering the window */
+
+  vcsEndOverblank();
+  vcsWrite5(COLUBK, 0xa0);
+  vcsWrite5(VBLANK, 0); /* disable blanking */
+
+  if (!tinyelf_mount(drive) || !tinyelf_save_begin(name8, ext3)) {
+    i2c_release_bus();
+    vcsWrite5(VBLANK, 2);
+    vcsStartOverblank();
+    return 0;
+  }
+
+  eepromStreamLen = 0;
+  eepromStreamCap = tinyelf_chunk_size();
+  return 1;
+}
+
+uint8_t sdlistclose(void) {
+  uint8_t ok = (uint8_t)(eepromStreamLen != EEPROM_STREAM_FAILED);
+
+  eepromStreamCap = 0;
+  if (ok && eepromStreamLen > 0) {
+    ok = tinyelf_save_chunk(ibuffer, eepromStreamLen);
+  }
+  eepromStreamLen = 0;
+  if (ok) ok = tinyelf_save_end();
+
+  i2c_release_bus();
+  vcsWrite5(VBLANK, 2); /* enable blanking */
+  vcsStartOverblank();
+  return ok;
+}
+
+/* Called once per character while od==OEEPROM, i.e. from inside
+   listlines()'s real detokenization loop (main.c). The trailing
+   vcsJmp3()/vcsNop2n() precharge runs on EVERY character, not just on the
+   ones that complete a sector: it covers outputtoken()'s (main.c) real
+   ARM-only work PRODUCING each token's characters (keyword-table lookup,
+   outnumber()'s digit conversion for NUMBER/LINENUMBER tokens) between
+   calls here - confirmed on real hardware (2026-09-12/13): without it,
+   LIST "En:file" hangs mid-transaction (the "pink screen, player-sprite
+   garbage" signature - a timing violation, distinct from the "black
+   screen" undefined-symbol one this project usually sees first). */
+static void eepromwrite(char c) {
+  if (eepromStreamCap != 0 && eepromStreamLen != EEPROM_STREAM_FAILED) {
+    ibuffer[eepromStreamLen++] = c;
+    if (eepromStreamLen >= eepromStreamCap) {
+      eepromStreamLen = tinyelf_save_chunk(ibuffer, eepromStreamLen) ? 0 : EEPROM_STREAM_FAILED;
+    }
+  }
+  vcsJmp3(); vcsNop2n(200);
+}
+
+/* ---- ENTER "En:file" streaming - see the LIST/ENTER project plan.
+   Unlike LIST's sdlistopen()/sdlistclose() (one continuous window held
+   open across the whole listlines() call), this REOPENS the window for
+   every single chunk: the caller (main.c's xenter(), not yet written)
+   tokenizes and storeline()s each complete line BETWEEN calls here, with
+   overblank back on - storeline() can moveblock() an unbounded amount of
+   the whole program buffer to insert one line, so there is no safe fixed
+   vcsNop2n() budget for that, unlike LIST's bounded per-character
+   formatting cost. sdenteropen() mounts and locates the file in its own
+   window; sdenterchunk() reopens fresh for each subsequent chunk. */
+uint8_t sdenteropen(const char *name) {
+  char name8[TINYELF_NAME_LEN], ext3[TINYELF_EXT_LEN];
+  uint8_t drive, ok;
+  const char *rest;
+
+  if (!tinyelf_parse_drive(name, &drive, &rest)) return 0;
+  tinyelf_split_name(rest, name8, ext3); /* no I2C needed - do this before entering the window */
+
+  vcsEndOverblank();
+  vcsWrite5(COLUBK, 0xa0);
+  vcsWrite5(VBLANK, 0); /* disable blanking */
+
+  ok = (uint8_t)(tinyelf_mount(drive) && tinyelf_load_begin(name8, ext3));
+
+  i2c_release_bus();
+  vcsWrite5(VBLANK, 2); /* enable blanking */
+  vcsStartOverblank();
+  return ok;
+}
+
+uint16_t sdenterchunk(void *buf, uint16_t maxlen) {
+  uint16_t got;
+
+  vcsEndOverblank();
+  vcsWrite5(COLUBK, 0xa0);
+  vcsWrite5(VBLANK, 0); /* disable blanking */
+
+  got = tinyelf_load_chunk(buf, maxlen);
+
+  i2c_release_bus();
+  vcsWrite5(VBLANK, 2); /* enable blanking */
+  vcsStartOverblank();
+  return got;
+}
+
+#endif

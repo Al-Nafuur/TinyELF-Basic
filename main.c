@@ -19,11 +19,31 @@
 
 
 #include "vcsLib.h"
+#include "i2c_savekey.h"
 
 #define TEXT_HEIGHT        12     // 12 lines tall
 #define TEXT_LINE_SPACING   1
-#define ROW_LENGTH         36     // 36 characters per row
+#define ROW_LENGTH_G0      36     // GRAPHICS 0: 36 characters per row
+#define ROW_LENGTH_G1      18     // GRAPHICS 1: 18 double-width characters per row
 #define NUM_OF_ROWS        14     // 14 rows
+#define PF_SHADOW_RAM_WIDTH       8
+
+/* current text/graphics mode: 0 = normal 36-column text, 1 = 18-column
+   double-width text (see xgraphics()). rowLength tracks the column
+   count of whichever mode is active, so put_char()/next_row() don't
+   need to branch on graphicsMode themselves. */
+uint8_t graphicsMode = 0;
+uint8_t rowLength = ROW_LENGTH_G0;
+
+/* GRAPHICS 1 font widening: normal letter glyphs only use 3 significant
+   bits, but the cursor-block trick (space char drawn with CHAR_MASK
+   0xF0) uses all 4 (0xF0 -> chr=15) to get a solid block - so this
+   needs the full 16 entries, not just 8. Each input bit is duplicated
+   into 2 adjacent output bits, doubling the glyph width. */
+static const uint8_t double_bits[16] = {
+  0x00, 0x03, 0x0C, 0x0F, 0x30, 0x33, 0x3C, 0x3F,
+  0xC0, 0xC3, 0xCC, 0xCF, 0xF0, 0xF3, 0xFC, 0xFF
+};
 
 #define CHAR_MASK           0
 #define CURSOR_COL          1
@@ -107,17 +127,18 @@
 #define COL_00      0x00
 #define COL_0E      0x0e
 
-// NTSC Colors
-#define COL_94      0x94
-#define COL_80      0x80
+/* Default text background. Newer UCA firmware no longer exports vcsLib's
+   ColorLookup[] table, so the TV-system-dependent value is chosen directly
+   from mainArgs[MP_SYSTEM_TYPE] in setup(). Values = what the old firmware
+   tables (Ntsc2600/Pal2600/Ntsc7800/Pal7800) returned for index $94:
+   NTSC 2600/7800 $94, PAL and PAL60 2600 $B4, PAL 7800 $A4. PAL60 uses the
+   PAL palette - same TIA chip, just NTSC-style line timing. Not referencing
+   ColorLookup keeps the build loadable on old and new firmware alike. */
+#define COL_BACKGROUND_NTSC     0x94
+#define COL_BACKGROUND_PAL      0xB4
+#define COL_BACKGROUND_PAL_7800 0xA4
 
-// PAL Colors
-//#define COL_94   0xb4
-//#define COL_80   0xd0
-
-// use vcsLib ColorLookup array later!
-#define COL_BORDER          COL_00 
-#define COL_BACKGROUND      COL_94
+#define COL_BORDER          COL_00
 #define TEXT_COLOR_0        COL_0E
 #define TEXT_COLOR_1        COL_0E
 
@@ -237,25 +258,27 @@ static const uint16_t gfxFlatSize = (uint16_t)(108u * TEXT_HEIGHT);
    scroll_video_ram()'s word-wise memmove. */
 uint8_t videoRAM[(NUM_OF_ROWS * TEXT_HEIGHT * 20 ) + 20] __attribute__((aligned(4), section(".data"))) = { [0 ... ((NUM_OF_ROWS * TEXT_HEIGHT * 20 ) + 19)] = 0x00 };
 
-uint8_t bkColorRAM[NUM_OF_ROWS * (TEXT_HEIGHT + 1 )] = { [ 0 ... ( NUM_OF_ROWS * (TEXT_HEIGHT + 1 ) - 1)] = COL_BACKGROUND };
+/* filled with the default background in setup() - can't use a static
+   initializer since the colour depends on the TV system passed in mainArgs */
+uint8_t bkColorRAM[NUM_OF_ROWS * (TEXT_HEIGHT + 1 )];
 
 uint8_t txtColorRAM[NUM_OF_ROWS] = {  [ 0 ... (NUM_OF_ROWS - 1) ] = TEXT_COLOR_0 };
 
-uint8_t playfieldShadowRAM[NUM_OF_ROWS * 5] = { 
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0,
-  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0
+uint8_t playfieldShadowRAM[NUM_OF_ROWS * PF_SHADOW_RAM_WIDTH] = { 
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0,
+  COL_BORDER, BALL_1_CLK | PF_PRIORITY | PF_REFLECT, BORDER_SHAPE, 0, 0, BORDER_SHAPE, 0, 0
 };
 
 uint8_t tiaShadowRAM[27] = { 
@@ -314,6 +337,14 @@ uint32_t get_frame_counter(void) { return frameCounter; }
 #define TOKENBUDGET_ADDR 0x28C
 #define tokenBudget (*(uint16_t*)&riotShadowRAM[TOKENBUDGET_ADDR & 0x1F])
 
+/* height (in text rows) of the scrollable text window at the bottom of
+   the screen when a windowed GRAPHICS mode (3/8) is active - 0 means no
+   window (whole screen scrolls, GRAPHICS 0/1 behaviour). Set by
+   xgraphics() to a default, but POKE/PEEK-able afterwards so a program
+   can grow/shrink the window (e.g. POKE 654,7 for a taller window). */
+#define WINDOWHEIGHT_ADDR 0x28E
+#define windowHeight (riotShadowRAM[WINDOWHEIGHT_ADDR & 0x1F])
+
 char active_char = '\0';
 
 // note: sizeof(CustomOverblank) MUST be exactly 49 bytes and end on "jmp $1000"
@@ -364,23 +395,32 @@ RAM_FUNC void vcsCopyCustomOverblankToRiotRam(){
 
 
 
+/* scrolls numRows text rows up by one, starting at startRow - used both
+   for the full-screen scroll (GRAPHICS 0/1: startRow=0, numRows=
+   NUM_OF_ROWS) and for a windowed text area at the bottom of a split
+   GRAPHICS 3/8 screen (startRow=NUM_OF_ROWS-windowHeight, numRows=
+   windowHeight), leaving whatever is above startRow untouched. */
 __attribute__((optimize("O3","no-tree-loop-distribute-patterns")))
-RAM_FUNC void scroll_video_ram(){
-  uint32_t *dst = (uint32_t *)&videoRAM[0];
-  uint32_t *src = (uint32_t *)(dst + (TEXT_HEIGHT * 20 / 4) ); // Offset one text line
+RAM_FUNC void scroll_video_ram_rows(uint8_t startRow, uint8_t numRows){
+  uint32_t *dst = (uint32_t *)&videoRAM[(uint32_t)startRow * TEXT_HEIGHT * 20];
+  uint32_t *src = dst + (TEXT_HEIGHT * 20 / 4); // offset one text line
 
-  size_t words = 780; // 3120 B / 4
+  size_t words = ((uint32_t)(numRows - 1) * TEXT_HEIGHT * 20) / 4;
 
   while (words--) {
     *dst++ = *src++;
   }
 
-  /* clear the freed tail */
-  memset(&videoRAM[0] + (sizeof(videoRAM) - 260), 0, 240);
+  /* clear the freed last row of the window */
+  memset(&videoRAM[((uint32_t)startRow + numRows - 1) * TEXT_HEIGHT * 20], 0, TEXT_HEIGHT * 20);
 
   /* this cost (was previously invisible to tokenCounter - no yield at all)
      counts against the render-cadence budget like everything else. */
   byield();
+}
+
+RAM_FUNC void scroll_video_ram(){
+  scroll_video_ram_rows(0, NUM_OF_ROWS);
 }
 
 RAM_FUNC void positioningTiaElement(uint8_t i, uint8_t x){
@@ -403,10 +443,14 @@ RAM_FUNC void KERNEL_1_line(const uint8_t *linePointer, uint8_t flag12) {
     vcsSta3(HMOVE);
 
     if (flag12 == 0){
-       	vcsJmp3();  // SLEEP(5)
-        vcsNop2();
+        /* The original has 5 free cycles here (SLEEP 5). They are used to point the stack at ENAM0
+           for the PHP of the following KERNEL_2 line (ldx #ENAM0 / txs + a 4 cycle sta instead of
+           a 3 cycle one = the same 10 cycles), so that line no longer depends on the stack having
+           been decremented by a PHA in the previous one. */
+        vcsLdx2(ENAM0);
+        vcsTxs2();
         vcsLda2(linePointer[1]); // lda #{1} -> R?L??_03_04  (index 1)
-        vcsSta3(GRP0);
+        vcsSta4(GRP0);
     } else {
         vcsLdx2(ENAM1);
         vcsTxs2();
@@ -477,8 +521,12 @@ RAM_FUNC void KERNEL_2_line(const uint8_t *linePointer, uint8_t use_enam, uint8_
     vcsSta3(RESP0);
     vcsLda2(linePointer[16]); // lda #{8} -> R?L??_33_34 (index 16)  (also used above as {9})
     vcsSta3(GRP0);
-    // IF {8} == 0 -> pha else php
-    if (linePointer[16] == 0) vcsPha3();
+    /* A == 0: the original does PHA (writes 0 to ENAMx through the stack). On the 7800 that write turns
+       the missile ON instead (diagnostic builds C/D confirmed this), so use a plain 3 cycle store of the
+       same 0 to the same register instead - identical timing. A != 0: PHP as in the original (Z flag is
+       clear). See the KERNEL_1_line() flag12==0 branch above for the matching stack-pointer setup this
+       depends on. */
+    if (linePointer[16] == 0) vcsSta3((uint8_t)(ENAM0 + use_enam));
     else vcsPhp3();
 
     // end-of-kernel: choose based on free_cycles_at_end
@@ -525,6 +573,9 @@ RAM_FUNC void renderDisplayFrame() {
     vcsLda2(RIGHT_8);
     vcsSta3(HMP1);
 
+    vcsLdx2((uint8_t)(ENAM1 - tiaShadowRAM[EVEN_FRAME])); // or vcsLdx3(ENAM1 + tiaShadowRAM[EVEN_FRAME]) ??
+    vcsTxs2();
+
     vcsLda2(0);
     vcsSta3(COLUBK);
 
@@ -535,22 +586,63 @@ RAM_FUNC void renderDisplayFrame() {
     vcsSta3(WSYNC);
 #endif
     vcsSta3(WSYNC);
+    int startRow = graphicsMode == 3 ? (NUM_OF_ROWS - windowHeight) : 0;
+    uint8_t n_row = 0;
+    uint8_t row = 0;
+    uint8_t row_base = 0;
+    while(row < startRow ){
+      for (uint8_t line = 0; line < (TEXT_HEIGHT + TEXT_LINE_SPACING); line++) {
+        n_row = row * PF_SHADOW_RAM_WIDTH;
+        vcsSta3(WSYNC); //
+        vcsLda2(bkColorRAM[row_base++]);
+        vcsSta3(COLUBK);
+        vcsLda2(playfieldShadowRAM[n_row++]);
+        vcsSta3(COLUPF);
+        vcsLda2(playfieldShadowRAM[n_row++]);
+        vcsSta3(CTRLPF);
+        vcsLda2(playfieldShadowRAM[n_row++]);
+        vcsSta3(PF0);
+        vcsLda2(playfieldShadowRAM[n_row++]);
+        vcsSta3(PF1);
+        vcsLda2(playfieldShadowRAM[n_row++]);
+        vcsSta3(PF2);
+        vcsJmp3();
+        vcsSleep(7);
+        vcsLda2(playfieldShadowRAM[n_row++]);
+        vcsSta3(PF0);
+        vcsLda2(playfieldShadowRAM[n_row++]);
+        vcsSta3(PF1);
+        vcsLda2(playfieldShadowRAM[n_row++]);
+        vcsSta3(PF2);
+        if(line < TEXT_HEIGHT)
+          linePtr += 20;
+      }
+      row++;
+    }
+
     vcsSta3(WSYNC);
 
-    vcsLda2(bkColorRAM[0]);
+    vcsLda2(bkColorRAM[row_base]);
     vcsSta3(COLUBK);
 
-    vcsLda2(playfieldShadowRAM[0]);
+    vcsLda2(playfieldShadowRAM[n_row++]);
     vcsSta3(COLUPF);
-    vcsLda2(playfieldShadowRAM[1]);
+    vcsLda2(playfieldShadowRAM[n_row++]);
     vcsSta3(CTRLPF);
-    vcsLda2(playfieldShadowRAM[2]);
+    vcsLda2(playfieldShadowRAM[n_row++]);
     vcsSta3(PF0);
-    vcsLda2(playfieldShadowRAM[3]);
+    vcsLda2(playfieldShadowRAM[n_row++]);
     vcsSta3(PF1);
-    vcsLda2(playfieldShadowRAM[4]);
+    vcsLda2(playfieldShadowRAM[n_row++]);
     vcsSta3(PF2);
-
+//    vcsJmp3();
+//    vcsSleep(7);
+//    vcsLda2(playfieldShadowRAM[n_row++]);
+//    vcsSta3(PF0);
+//    vcsLda2(playfieldShadowRAM[n_row++]);
+//    vcsSta3(PF1);
+//    vcsLda2(playfieldShadowRAM[n_row]);
+//    vcsSta3(PF2);
     // DELAY_X_CYCLES 48
     // we skip 14 (odd frame) 15(even frame) 
     // cycles of bankswitching code here
@@ -569,7 +661,7 @@ RAM_FUNC void renderDisplayFrame() {
         vcsSta3(HMOVE);
     }
 
-    for (uint8_t row = 0; row < NUM_OF_ROWS; row++) {
+    for (; row < NUM_OF_ROWS; row++) {
         uint8_t row_base = row * (TEXT_HEIGHT + TEXT_LINE_SPACING);
         if (kernel_a){ // KERNEL_A
             for (uint8_t line = 0; line < TEXT_HEIGHT; line++) {
@@ -594,7 +686,7 @@ RAM_FUNC void renderDisplayFrame() {
             vcsLda2( bkColorRAM[row_base + 12] );
             vcsSta3(COLUBK);
             if(row < (NUM_OF_ROWS - 1 )){
-                uint8_t n_row = row + 1;
+                n_row = row + 1;
                 // KERN_A_TO_B 
                 // COLOR_ROW
                 //ldx    rowIndex              ;3
@@ -621,7 +713,7 @@ RAM_FUNC void renderDisplayFrame() {
                 // DELAY_X_CYCLES {3}
 //              	vcsJmp3();
 
-                n_row *= 5;
+                n_row *= PF_SHADOW_RAM_WIDTH;
 
                 vcsLda2(playfieldShadowRAM[n_row++]);
                 vcsSta3(COLUPF);
@@ -631,7 +723,7 @@ RAM_FUNC void renderDisplayFrame() {
                 vcsSta3(PF0);
                 vcsLda2(playfieldShadowRAM[n_row++]);
                 vcsSta3(PF1);
-                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsLda2(playfieldShadowRAM[n_row]);
                 vcsSta3(PF2);
 
                 vcsSleep(32);
@@ -666,7 +758,7 @@ RAM_FUNC void renderDisplayFrame() {
 
             if(row < (NUM_OF_ROWS - 1) ){
                 // KERNEL_B_TO_A 
-                uint8_t n_row = row + 1;
+                n_row = row + 1;
 
                 // COLOR_ROW
                 vcsLda2(txtColorRAM[n_row]);
@@ -684,7 +776,7 @@ RAM_FUNC void renderDisplayFrame() {
                 vcsLda2( bkColorRAM[(n_row) * (TEXT_HEIGHT + 1 )] );
                 vcsSta3(COLUBK);
                 // DELAY_X_CYCLES {2}
-                n_row *= 5;
+                n_row *= PF_SHADOW_RAM_WIDTH;
 
                 vcsLda2(playfieldShadowRAM[n_row++]);
                 vcsSta3(COLUPF);
@@ -694,7 +786,7 @@ RAM_FUNC void renderDisplayFrame() {
                 vcsSta3(PF0);
                 vcsLda2(playfieldShadowRAM[n_row++]);
                 vcsSta3(PF1);
-                vcsLda2(playfieldShadowRAM[n_row++]);
+                vcsLda2(playfieldShadowRAM[n_row]);
                 vcsSta3(PF2);
 
 
@@ -720,6 +812,45 @@ RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c) {
         0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x0F, 0x1F, 0x0F,
         0x1F, 0x0F
     };*/
+    if (graphicsMode == 1) {
+        /* GRAPHICS 1: one full byte per column (no nibble-sharing with a
+           neighbour), so pair==col directly - reuses the same 18-slot
+           RESP0/HMOVE timing correction as GRAPHICS 0, just with a
+           doubled (6 bit) glyph filling most of the byte instead of a
+           packed 4 bit nibble. Only vram_lls (0/1) is safe to use as
+           the shift here - vram_uls (3-5) would push the wider pattern
+           past bit 7. The col==1 missile-bit special case is dropped:
+           with real inter-character spacing the gap falls between
+           letters, not inside one, so it doesn't need patching. */
+        uint8_t pair = col;
+        int rowBase = row * TEXT_HEIGHT * 20;
+        const uint8_t l = vram_lls[pair];
+        const uint8_t my_mask = tiaShadowRAM[CHAR_MASK];
+        const uint8_t my_shift = (my_mask == 0xf0) ? 4 : 0;
+        int vline = rowBase;
+        for (uint8_t line = 0; line < TEXT_HEIGHT; ++line) {
+            uint8_t chr = (gfxArray[c - 32][line] & my_mask) >> my_shift; // 3 significant bits
+
+            if (col == 0) {
+                videoRAM[vline + 19] = (uint8_t)((chr << 1) & 0x02u);
+                /* clear the old character first (same mask as vram_del_char_at), so a
+                   LOCATE + PUT over an existing character leaves no pixels behind */
+                videoRAM[vline] = (uint8_t)((videoRAM[vline] & ~(0xFFu >> l)) | (double_bits[chr] >> l));
+
+            } else {
+                videoRAM[vline + pair] = (uint8_t)(double_bits[chr] << l);
+            }
+
+
+
+            if (pair == 0 || pair == 2) {
+                videoRAM[vline + 18] = (uint8_t)((videoRAM[vline] & 0x07u) | (videoRAM[vline + 2] & 0xF8u));
+            }
+            vline += 20;
+        }
+        return;
+    }
+
     uint8_t pair = col >> 1;
     int rowBase = row * TEXT_HEIGHT * 20;
 
@@ -733,6 +864,16 @@ RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c) {
     const uint8_t my_flag  = cond ? 0xff : 0x00;
     const uint8_t my_shift = cond ? 4    : 0;
 
+    /* two columns share a byte: clear only the bits this column owns (same masks as
+       vram_del_char_at) before setting the new ones. Then LOCATE + PUT can overwrite a
+       single character without leaving pixels behind or wiping out its neighbour. */
+    uint8_t clearMask;
+    if (col & 1) {
+        if (col == 1) clearMask = (uint8_t)(((1u << (4 - l)) - 1) | high_fill);
+        else clearMask = (uint8_t)((0x0Fu << l) | low_fill);
+    } else {
+        clearMask = (uint8_t)(0x0Fu << u);
+    }
 
     int vline = rowBase; // starts at rowBase, we increment 20 per iteration
     for (uint8_t line = 0; line < TEXT_HEIGHT; ++line) {
@@ -740,13 +881,13 @@ RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c) {
         if (col & 1) {
             if (col == 1) {
                 videoRAM[vline + 19] = (uint8_t)((chr << 1) & 0x02u);
-                videoRAM[vline] |= (uint8_t)((chr >> l) | (high_fill & my_flag));
+                videoRAM[vline] = (uint8_t)((videoRAM[vline] & ~clearMask) | (chr >> l) | (high_fill & my_flag));
 
             } else {
-                videoRAM[vline + pair] |= (uint8_t)((chr << l) | (low_fill & my_flag));
+                videoRAM[vline + pair] = (uint8_t)((videoRAM[vline + pair] & ~clearMask) | (chr << l) | (low_fill & my_flag));
             }
         } else {
-            videoRAM[vline + pair] = (uint8_t)((chr << u));
+            videoRAM[vline + pair] = (uint8_t)((videoRAM[vline + pair] & ~clearMask) | (chr << u));
         }
         if (pair == 0 || pair == 2) {
             videoRAM[vline + 18] = (uint8_t)((videoRAM[vline] & 0x07u) | (videoRAM[vline + 2] & 0xF8u));
@@ -756,6 +897,28 @@ RAM_FUNC void vram_write_char_at(uint8_t col, uint8_t row, char c) {
 }
 
 RAM_FUNC void vram_del_char_at(uint8_t col, uint8_t row){
+    if (graphicsMode == 1) {
+        /* GRAPHICS 1: mirrors vram_write_char_at()'s col==0 special case
+           (missile bit in byte 19 + OR'd contribution in byte 0) - every
+           other column is a plain single-byte overwrite. */
+        uint8_t pair = col;
+        int rowBase = row * TEXT_HEIGHT * 20;
+        const uint8_t l = vram_lls[0];
+        for (uint8_t line = 0; line < TEXT_HEIGHT; line++) {
+            int vline = line * 20;
+            if (col == 0) {
+                videoRAM[rowBase + vline + 19] = 0;
+                videoRAM[rowBase + vline] &= (uint8_t)~(0xFFu >> l);
+            } else {
+                videoRAM[rowBase + vline + pair] = 0;
+            }
+            if (pair == 0 || pair == 2) {
+                videoRAM[rowBase + vline + 18] = (videoRAM[rowBase + vline] & 0x07) | (videoRAM[rowBase + vline + 2] & 0xF8);
+            }
+        }
+        return;
+    }
+
     uint8_t pair = col >> 1;
     int rowBase = row * TEXT_HEIGHT * 20;
     uint8_t l = vram_lls[pair];
@@ -827,6 +990,12 @@ RAM_FUNC void cursor_reset(void) {
 }
 
 RAM_FUNC void cursor_update(void) {
+    /* windowless GRAPHICS 3/8 (+16): nothing is visible while typing
+       (see put_char()), so the blinking cursor must stay hidden too */
+    if ((graphicsMode == 3 || graphicsMode == 8) && windowHeight == 0) {
+        cursor_reset();
+        return;
+    }
     if (st != SINT && !inputActive) {
         cursor_reset();
         return;
@@ -838,16 +1007,43 @@ RAM_FUNC void cursor_update(void) {
     }
 }
 
+/* BASIC is single-threaded, so a program can never move the cursor
+   above the text window while we're blocked waiting for interactive
+   input - one snap-into-window check right before reading a line
+   (READY prompt and INPUT both go through here) is enough; a program
+   is still free to POKE the cursor into the graphics area for its own
+   PRINT output between reads. */
+RAM_FUNC void cursor_clamp_to_window(void){
+    uint8_t top = NUM_OF_ROWS - windowHeight;
+    if (windowHeight > 0 && tiaShadowRAM[CURSOR_ROW] < top) {
+        tiaShadowRAM[CURSOR_ROW] = top;
+        tiaShadowRAM[CURSOR_COL] = 0;
+    }
+}
+
 RAM_FUNC void next_row(){
     tiaShadowRAM[CURSOR_COL] = 0;
     tiaShadowRAM[CURSOR_ROW]++;
     if(tiaShadowRAM[CURSOR_ROW] >= NUM_OF_ROWS){
         tiaShadowRAM[CURSOR_ROW] = NUM_OF_ROWS-1;
-        scroll_video_ram();
+        if (windowHeight > 0) {
+            scroll_video_ram_rows(NUM_OF_ROWS - windowHeight, windowHeight);
+        } else {
+            scroll_video_ram();
+        }
     }
 }
 
 RAM_FUNC void put_char(char c){
+    /* windowless GRAPHICS 3/8 (+16): no text window exists at all, so
+       typing is "blind" - same as classic Atari BASIC, where you have
+       to switch back to GRAPHICS 0 to see your cursor and text again.
+       The input line buffer itself doesn't depend on this - it's built
+       independently in serialread(), put_char() is echo-only. c==12
+       (clear screen) must still go through - it's what xgraphics()
+       uses to blank the screen on a mode switch. */
+    if ((graphicsMode == 3 || graphicsMode == 8) && windowHeight == 0 && c != 12) return;
+
     cursor_reset();
     if(c == '\n' || c == '\r' ){
         next_row();
@@ -856,7 +1052,7 @@ RAM_FUNC void put_char(char c){
         if(tiaShadowRAM[CURSOR_COL] == 0xff){
           if(tiaShadowRAM[CURSOR_ROW] > 0){
             tiaShadowRAM[CURSOR_ROW]--;
-            tiaShadowRAM[CURSOR_COL] = ROW_LENGTH - 1;
+            tiaShadowRAM[CURSOR_COL] = rowLength - 1;
           }else{
             tiaShadowRAM[CURSOR_COL] = 0;
           }
@@ -865,7 +1061,7 @@ RAM_FUNC void put_char(char c){
     }else if(c >= ' ' && c <= '~'){
         vram_write_char_at(tiaShadowRAM[CURSOR_COL], tiaShadowRAM[CURSOR_ROW], c);
         tiaShadowRAM[CURSOR_COL]++;
-        if(tiaShadowRAM[CURSOR_COL] >= ROW_LENGTH){
+        if(tiaShadowRAM[CURSOR_COL] >= rowLength){
             next_row();
         }
     }else if(c == 12){
@@ -873,12 +1069,32 @@ RAM_FUNC void put_char(char c){
       tiaShadowRAM[CURSOR_ROW] = 0;
       memset(&videoRAM[0], 0, (sizeof(videoRAM) - 20));
       for(int i = 0; i < NUM_OF_ROWS; i++){
-        int c = i * 5;
-        playfieldShadowRAM[c++] = COL_BORDER;
-        playfieldShadowRAM[c++] = BALL_1_CLK | PF_PRIORITY | PF_REFLECT;
-        playfieldShadowRAM[c++] = BORDER_SHAPE;
-        playfieldShadowRAM[c++] = 0;
-        playfieldShadowRAM[c] = 0;
+        int c = i * PF_SHADOW_RAM_WIDTH;
+        if (graphicsMode == 3 && i < (NUM_OF_ROWS - windowHeight)) {
+          /* blank canvas, but only for the actual playfield-rendered
+             graphics rows - the text window rows below keep the normal
+             mirrored border look, same as every other mode. PF0-2/PF0R-2R
+             all cleared, CTRLPF without PF_REFLECT (repeat) - the
+             left/right halves are independent via the mid-scanline
+             reload, not a hardware mirror. */
+          playfieldShadowRAM[c++] = COL_BORDER;
+          playfieldShadowRAM[c++] = BALL_1_CLK | PF_PRIORITY;
+          playfieldShadowRAM[c++] = 0;
+          playfieldShadowRAM[c++] = 0;
+          playfieldShadowRAM[c++] = 0;
+          playfieldShadowRAM[c++] = 0;
+          playfieldShadowRAM[c++] = 0;
+          playfieldShadowRAM[c] = 0;
+        } else {
+          playfieldShadowRAM[c++] = COL_BORDER;
+          playfieldShadowRAM[c++] = BALL_1_CLK | PF_PRIORITY | PF_REFLECT;
+          playfieldShadowRAM[c++] = BORDER_SHAPE;
+          playfieldShadowRAM[c++] = 0;
+          playfieldShadowRAM[c++] = 0;
+          playfieldShadowRAM[c++] = 0;
+          playfieldShadowRAM[c++] = 0;
+          playfieldShadowRAM[c] = 0;
+        }
       }
     }
 }
@@ -931,6 +1147,18 @@ mem_t vcs_memread2(number_t address){
 }
 
 uint32_t tokenCounter = 0;
+
+/* Work counter for the frame cadence: counts the tokens the interpreter
+   actually reads (gettoken()), down to 0, so a statement with a long
+   expression uses up the frame budget faster than a trivial one. The
+   statement-based tokenCounter alone assumes an average statement cost;
+   an expression-heavy loop (POKE with a 20 token formula, thousands of
+   times) then lets far too much time pass between two frames, which
+   crashes real hardware (black screen). bloop() renders a frame when
+   EITHER counter has run out. TOKEN_WORK_FACTOR = average tokens per
+   statement, so ordinary code still renders at the old cadence. */
+#define TOKEN_WORK_FACTOR 4
+uint32_t workCounter = 0;
 bool key_restrainer = false;
 
 static uint32_t* g_mainArgs = 0;
@@ -1065,10 +1293,14 @@ const char sdwrite[]  PROGMEM = "DWRITE";
 const char sdread[]   PROGMEM = "DREAD";
 const char sawrite[]  PROGMEM = "AWRITE";
 const char saread[]   PROGMEM = "AREAD";
-const char sdelay[] PROGMEM = "DELAY";
-const char smillis[]	PROGMEM = "MILLIS";
 const char sazero[]		PROGMEM = "AZERO";
 const char sled[]		PROGMEM = "LED";
+#endif
+/* DELAY and MILLIS also on TinyELF, without the rest of the Arduino I/O:
+   timed by the frame counter, see millis() and bdelay() in runtime.c */
+#if defined(HASARDUINOIO) || defined(STM32)
+const char sdelay[] PROGMEM = "DELAY";
+const char smillis[]	PROGMEM = "MILLIS";
 #endif
 #ifdef HASTONE
 const char stone[]	PROGMEM = "PLAY";
@@ -1079,8 +1311,9 @@ const char spulse[]	PROGMEM = "PULSE";
 /* DOS functions */
 const char scatalog[]	PROGMEM = "CATALOG";
 const char sftpconn[]	PROGMEM = "CONNECT";
-#ifdef HASFILEIO
+const char senter[]	PROGMEM = "ENTER";
 const char sdelete[]	PROGMEM = "DELETE";
+#ifdef HASFILEIO
 const char sfopen[]		PROGMEM = "OPEN";
 const char sfclose[]	PROGMEM = "CLOSE";
 const char sfdisk[]		PROGMEM = "FDISK";
@@ -1130,12 +1363,14 @@ const char seval[]		PROGMEM  = "EVAL";
 #ifdef HASERRORHANDLING
 const char serror[]     PROGMEM  = "ERROR";
 #endif
-/* iot extensions */
-#ifdef HASIOT
-const char savail[]		PROGMEM  = "AVAIL";
+/* iot extensions, STR, INSTR and VAL also come with MS strings */
+#if defined(HASIOT) || defined(HASMSSTRINGS)
 const char sstr[]		PROGMEM  = "STR";
 const char sinstr[]		PROGMEM  = "INSTR";
 const char sval[]		PROGMEM  = "VAL";
+#endif
+#ifdef HASIOT
+const char savail[]		PROGMEM  = "AVAIL";
 const char snetstat[]	PROGMEM  = "NETSTAT";
 const char ssensor[]	PROGMEM  = "SENSOR";
 const char swire[]		PROGMEM  = "WIRE";
@@ -1183,6 +1418,13 @@ const char shelp[]		PROGMEM = "HELP";
 const char sshl[]		PROGMEM = "<<";
 const char sshr[]		PROGMEM = ">>";
 const char sbit[]		PROGMEM = "BIT";
+const char sgraphics[]	PROGMEM = "GRAPHICS";
+const char sstick[]	PROGMEM = "STICK";
+const char sstrig[]	PROGMEM = "STRIG";
+const char sptrig[]	PROGMEM = "PTRIG";
+const char splot[]		PROGMEM = "PLOT";
+const char sdrawto[]	PROGMEM = "DRAWTO";
+const char sformat[]	PROGMEM = "FORMAT";
 #ifdef HASCAMERA
 const char scam[]	PROGMEM = "CAM";
 #endif
@@ -1191,7 +1433,12 @@ const char scam[]	PROGMEM = "CAM";
 /* zero terminated keyword storage */
 const char* const keyword[] PROGMEM = {
   sge, sle, sne, sprint, slet, sinput,
-  sgoto, sgosub, sreturn, sif, sfor, sto,
+  sgoto, sgosub, sreturn, sif,
+  /* sformat must be matched before sfor - "FOR" is a strict prefix of
+     "FORMAT" and the keyword scanner has no word-boundary check, so
+     whichever of the two appears first in this array wins for any input
+     starting with "FOR" (see nexttoken()'s keyword loop, ~line 4531) */
+  sformat, sfor, sto,
   sstep, snext, sstop, slist, snew, srun,
   sabs, srnd, ssize, srem,
 #ifdef HASAPPLE1
@@ -1213,7 +1460,10 @@ const char* const keyword[] PROGMEM = {
   selse,
 #ifdef HASARDUINOIO
   spinm, sdwrite, sdread, sawrite, saread,
-  sdelay, smillis, sazero, sled,
+  sazero, sled,
+#endif
+#if defined(HASARDUINOIO) || defined(STM32)
+  sdelay, smillis,
 #endif
 #ifdef HASTONE
   stone,
@@ -1221,9 +1471,9 @@ const char* const keyword[] PROGMEM = {
 #ifdef HASPULSE
   spulse,
 #endif
-  scatalog, sftpconn,
+  scatalog, sftpconn, senter, sdelete,
 #ifdef HASFILEIO
- sdelete, sfopen, sfclose, sfdisk,
+  sfopen, sfclose, sfdisk,
 #endif
 #ifdef HASUSRCALL
   susr, scall,
@@ -1247,7 +1497,7 @@ const char* const keyword[] PROGMEM = {
   serror,
 #endif
 #ifdef HASIOT
-  savail, sstr, sinstr, sval,
+  savail,
   snetstat, ssensor, swire, ssleep,
 #endif
 #ifdef HASTIMER
@@ -1274,7 +1524,11 @@ const char* const keyword[] PROGMEM = {
 #ifdef HASHELP
   shelp,
 #endif
-  sshl, sshr, sbit,
+  sshl, sshr, sbit, sgraphics, sstick, sstrig, sptrig, splot, sdrawto,
+  /* STR must come after STRIG, the lexer takes the first keyword that matches */
+#if defined(HASIOT) || defined(HASMSSTRINGS)
+  sstr, sinstr, sval,
+#endif
 #ifdef HASCAMERA
   scam,
 #endif
@@ -1284,7 +1538,7 @@ const char* const keyword[] PROGMEM = {
 /* the zero terminated token dictonary needed for scalability */
 const token_t tokens[] PROGMEM = {
   GREATEREQUAL, LESSEREQUAL, NOTEQUAL, TPRINT, TLET,
-  TINPUT, TGOTO, TGOSUB, TRETURN, TIF, TFOR, TTO, TSTEP,
+  TINPUT, TGOTO, TGOSUB, TRETURN, TIF, TFORMAT, TFOR, TTO, TSTEP,
   TNEXT, TSTOP, TLIST, TNEW, TRUN, TABS, TRND, TSIZE, TREM,
 #ifdef HASAPPLE1
   TNOT, TAND, TOR, TLEN, TSGN, TPEEK, TDIM, TCLR,
@@ -1303,8 +1557,11 @@ const token_t tokens[] PROGMEM = {
 #endif
   TELSE,
 #ifdef HASARDUINOIO
-  TPINM, TDWRITE, TDREAD, TAWRITE, TAREAD, TDELAY, TMILLIS,
+  TPINM, TDWRITE, TDREAD, TAWRITE, TAREAD,
   TAZERO, TLED,
+#endif
+#if defined(HASARDUINOIO) || defined(STM32)
+  TDELAY, TMILLIS,
 #endif
 #ifdef HASTONE
   TTONE,
@@ -1312,9 +1569,9 @@ const token_t tokens[] PROGMEM = {
 #ifdef HASPULSE
   TPULSE,
 #endif
-  TCATALOG, TFTPCONN,
+  TCATALOG, TFTPCONN, TENTER, TDELETE,
 #ifdef HASFILEIO
-  TDELETE, TOPEN, TCLOSE, TFDISK,
+  TOPEN, TCLOSE, TFDISK,
 #endif
 #ifdef HASUSRCALL
   TUSR, TCALL,
@@ -1337,7 +1594,7 @@ const token_t tokens[] PROGMEM = {
   TERROR,
 #endif
 #ifdef HASIOT
-  TAVAIL, TSTR, TINSTR, TVAL, TNETSTAT,
+  TAVAIL, TNETSTAT,
   TSENSOR, TWIRE, TSLEEP,
 #endif
 #ifdef HASTIMER
@@ -1364,7 +1621,10 @@ const token_t tokens[] PROGMEM = {
 #ifdef HASHELP
   THELP,
 #endif
-  TSHL, TSHR, TBIT,
+  TSHL, TSHR, TBIT, TGRAPHICS, TSTICK, TSTRIG, TPTRIG, TG8PLOT, TG8DRAWTO,
+#if defined(HASIOT) || defined(HASMSSTRINGS)
+  TSTR, TINSTR, TVAL,
+#endif
 #ifdef HASCAMERA
   TCAM,
 #endif
@@ -1382,7 +1642,7 @@ const bworkfunction_t workfunctions[] PROGMEM = {
 /* errors and messages */
 const char mfile[]    	PROGMEM = "file.bas";
 const char mprompt[]	PROGMEM = "";
-const char mgreet[]		PROGMEM = "TinyELF Basic v0.7 " STR(MEMSIZE) " Bytes Free\n";
+const char mgreet[]		PROGMEM = "TinyELF Basic v0.20 "; /* + free bytes, see displaybanner() */
 const char mline[]		PROGMEM = "LINE";
 const char mnumber[]	PROGMEM = "NUMBER";
 const char mvariable[]	PROGMEM = "VARIABLE";
@@ -1590,6 +1850,11 @@ mem_t substringmode = 0;
 mem_t substringmode = 1;
 #endif
 
+#ifdef HASMSSTRINGS
+/* MS style numbers: PRINT puts a space before positive numbers and after every number, STR$ a space before */
+mem_t msnumbers = 0;
+#endif
+
 /* the flag for true MS tabs */
 mem_t reltab = 0;
 mem_t dummy;
@@ -1713,7 +1978,7 @@ mem_t precision = 5;
  */
 
 /* the millis function for BASIC */
-#ifdef HASARDUINOIO
+#if defined(HASARDUINOIO) || defined(STM32)
 void bmillis() {
   number_t m;
   /* millis is processed as integer and is cyclic mod maxnumber and not cast to float!! */
@@ -1733,7 +1998,32 @@ void bmillis() {
  * allocate it here at all.
  */
 
-#if (!defined(MEMSIZE) || MEMSIZE == 0) && !(defined(SPIRAMINTERFACE))
+#if (!defined(MEMSIZE) || MEMSIZE == 0) && defined(STM32)
+/*
+ * TinyELF: the BASIC memory is not part of the ELF image. Where it goes
+ * depends on the cartridge:
+ *  - PlusCart/UnoCart: the firmware has moved everything out of the 64 KiB
+ *    CCM before the ELF starts, and tinyelf.ld keeps the ELF itself out of
+ *    it (no .bss), so BASIC gets the whole CCM. address_t is 16 bit, so the
+ *    usable size is 65535 bytes, like the malloc() variant below caps it.
+ *  - Gopher2600 loads every section, code included, from 0x10000000 on
+ *    (recognised by elf_main() itself lying there). It gets the emulator's
+ *    SRAM from 0x20000000 instead, below the stack at its top.
+ *  - Chameleon Cart: needs its memory map first (TODO, ask ZackAttack);
+ *    until then it falls through to the PlusCart rule.
+ */
+#define TINYELF_CCM_BASE    0x10000000u
+#define TINYELF_SRAM_BASE   0x20000000u
+#define TINYELF_GOPHER_MEM  0xC000u   /* 48 KiB, leaves 16 KiB below the emulator's stack */
+address_t ballocmem() {
+  if ((((uint32_t)&elf_main) & 0xF0000000u) == TINYELF_CCM_BASE) {
+    mem = (mem_t*)TINYELF_SRAM_BASE;
+    return TINYELF_GOPHER_MEM - 1;
+  }
+  mem = (mem_t*)TINYELF_CCM_BASE;
+  return maxaddr - 1;
+}
+#elif (!defined(MEMSIZE) || MEMSIZE == 0) && !(defined(SPIRAMINTERFACE))
 address_t ballocmem() {
 
   /* on most platforms we know the free memory for BASIC, this comes from runtime */
@@ -1880,6 +2170,27 @@ char autorun() {
     ifileclose();
     return 1;
   }
+#elif defined(STM32)
+  /* Disabled again - the TinyELF filesystem migration (tinyelf_fs.c) is
+     still being brought up and hasn't been hardware-verified yet even
+     via interactive commands, let alone this early-boot path (which was
+     ALREADY marked UNVERIFIED before that migration even started, and
+     got disabled once before this session for the exact same reason:
+     an early-boot xload("autoexec.bas") crash muddying whether the bug
+     is in the storage code or in running this call this early). Keep
+     this off until FORMAT/SAVE/LOAD/CATALOG are all confirmed working
+     interactively first - re-enable and test on its own after that,
+     the same way it was re-enabled (and then found to still crash) last
+     time, so at least it's a single, isolated variable to test instead
+     of two at once.
+  er = 0;
+  xload("autoexec.bas");
+  if (er == 0) {
+    st = SRUN;
+    return 1;
+  }
+  er = 0;
+  */
 #endif
 
   /* nothing to autorun */
@@ -2150,10 +2461,8 @@ number_t getvar(name_t *name) {
         return id;
       case 'O':
         return od;
-#ifndef STM32
-      case 'T':
+      case 'T': /* on TinyELF: the frame counter in milliseconds */
         return millis();
-#endif
       case 'C':
         if (availch()) return inch(); else return 0;
 #ifdef EEPROMMEMINTERFACE
@@ -2490,11 +2799,12 @@ void outname(name_t* name) {
 }
 
 #else
-/* this one is for the heap were we count down writing*/
+/* this one is for the heap were we count down writing, only the significant characters are stored */
 address_t setname_heap(address_t m, name_t* name) {
-  mem_t l;
-  for (l = name->l; l > 0; l--) memwrite2(m--, name->c[l - 1]);
-  memwrite2(m--, name->l);
+  mem_t l, n;
+  n = (name->l > SIGNAME) ? SIGNAME : name->l;
+  for (l = n; l > 0; l--) memwrite2(m--, name->c[l - 1]);
+  memwrite2(m--, n);
   return m;
 }
 
@@ -2518,11 +2828,12 @@ address_t getname(address_t m, name_t* name, memreader_t f) {
   return m;
 }
 
-/* compare two names */
+/* compare two names, only the first SIGNAME characters count */
 mem_t cmpname(name_t* a, name_t* b) {
-  mem_t l;
-  if (a->l != b->l) return 0;
-  for (l = 0; l < a->l; l++) if (a->c[l] != b->c[l]) return 0;
+  mem_t l, n;
+  n = (a->l > SIGNAME) ? SIGNAME : a->l;
+  if (n != ((b->l > SIGNAME) ? SIGNAME : b->l)) return 0;
+  for (l = 0; l < n; l++) if (a->c[l] != b->c[l]) return 0;
   return 1;
 }
 
@@ -4169,6 +4480,22 @@ char btoupper(char c) {
   if (c >= 'a' && c <= 'z') return c - 32; else return c;
 }
 
+#ifdef HASLONGNAMES
+/* is there a keyword at p? Like in MS BASIC a keyword ends a variable name (IFA=BTHEN) */
+mem_t keywordat(char* p) {
+  address_t k;
+  mem_t i;
+  char* kw;
+
+  for (k = 0; gettokenvalue(k) != 0; k++) {
+    kw = getkeyword(k);
+    for (i = 0; kw[i] != 0 && kw[i] == btoupper(p[i]); i++);
+    if (kw[i] == 0) return 1;
+  }
+  return 0;
+}
+#endif
+
 /* the token stream */
 void nexttoken() {
   address_t k, l, i;
@@ -4188,6 +4515,9 @@ void nexttoken() {
     }
     return;
   }
+
+  /* interactive line: gettoken() is not involved, count the token here */
+  if (workCounter) workCounter--;
 
   /* after change in buffer logic the first byte is reserved for the length */
   if (bi == ibuffer) bi++;
@@ -4357,18 +4687,20 @@ void nexttoken() {
      further up.
 
      The longname code supports MAXNAME characters and _ as additional character.
+     MS BASIC style: a keyword ends the name, characters after MAXNAME are dropped,
+     only the first SIGNAME characters are significant (cmpname, setname_heap).
   */
 #ifdef HASLONGNAMES
-  if (l > 0 && l <= MAXNAME) {
+  if (l > 0) {
     token = VARIABLE;
     zeroname(&name);
     while (((*bi >= '0' && *bi <= '9') ||
             (*bi >= '@' && *bi <= 'Z') ||
             (*bi >= 'a' && *bi <= 'z') ||
-            (*bi == '_') ) && name.l < MAXNAME && *bi != 0) {
-      name.c[name.l] = *bi;
+            (*bi == '_') ) && *bi != 0) {
+      if (name.l > 0 && keywordat(bi)) break;
+      if (name.l < MAXNAME) name.c[name.l++] = *bi;
       bi++;
-      name.l++;
     }
     if (*bi == '$') {
       token = STRINGVAR;
@@ -4591,6 +4923,8 @@ void gettoken() {
     token = EOL;
     return;
   }
+
+  if (workCounter) workCounter--;
 
   /* if we have no data type we are done reading just one byte */
   token = memread(here++);
@@ -5095,6 +5429,48 @@ void xabs() {
   push(x);
 }
 
+/* STICK(0) is the upper nibble of SWCHA (joystick 0), STICK(1) the
+   lower nibble (joystick 1) - riotShadowRAM is kept current in bloop() */
+void xstick() {
+  number_t n;
+  uint8_t sw;
+
+  n = pop();
+  sw = riotShadowRAM[SWCHA & 0x1F];
+  push((n == 0) ? ((sw >> 4) & 0x0F) : (sw & 0x0F));
+}
+
+/* STRIG(0)/STRIG(1) reflect the high bit of INPT4/INPT5 (the trigger
+   buttons) - tiaShadowRAM is kept current in bloop() */
+void xstrig() {
+  number_t n;
+  uint8_t v;
+
+  n = pop();
+  v = (n == 0) ? tiaShadowRAM[INPT4] : tiaShadowRAM[INPT5];
+  push((v & 0x80) ? 1 : 0);
+}
+
+/* PTRIG(0..3) - paddle trigger buttons, wired to the joystick left/right
+   bits of SWCHA: paddle 0/1 on port 0 (left/right), paddle 2/3 on port 1
+   (left/right). SWCHA bit layout: D7=P0 Right, D6=P0 Left, D3=P1 Right,
+   D2=P1 Left. */
+void xptrig() {
+  number_t n;
+  uint8_t sw;
+  uint8_t bitmask;
+
+  n = pop();
+  sw = riotShadowRAM[SWCHA & 0x1F];
+  switch ((int)n) {
+    case 0: bitmask = 0x40; break; /* port 0 left  -> paddle 0 */
+    case 1: bitmask = 0x80; break; /* port 0 right -> paddle 1 */
+    case 2: bitmask = 0x04; break; /* port 1 left  -> paddle 2 */
+    default: bitmask = 0x08; break; /* port 1 right -> paddle 3 */
+  }
+  push((sw & bitmask) ? 1 : 0);
+}
+
 /*
    SGN evaluates the sign
 */
@@ -5453,7 +5829,18 @@ char stringvalue(string_t* strp) {
 #ifdef HASFLOAT
       strp->length = writenumber2(sbuffer, pop());
 #else
+#ifdef HASMSSTRINGS
+      {
+        number_t n = pop();
+        if (msnumbers && n >= 0) {
+          *sbuffer = ' ';
+          strp->length = writenumber(sbuffer + 1, n) + 1;
+        } else
+          strp->length = writenumber(sbuffer, n);
+      }
+#else
       strp->length = writenumber(sbuffer, pop());
+#endif
 #endif
 #endif
       strp->ir = sbuffer;
@@ -5493,13 +5880,13 @@ char stringvalue(string_t* strp) {
         return 0;
       }
       nexttoken();
-      if (token != STRINGVAR) {
+      /* any string value, not only a variable, so that RIGHT$(STR$(X),2) works */
+      if (!stringvalue(strp)) {
         error(EARGS);
         return 0;
       }
-      parsestringvar(strp, &lhs);
       if (er != 0) return 0;
-      k = strp->length; /* the length of the original string variable */
+      k = strp->length; /* the length of the original string */
       nexttoken();
       if (token != ',') {
         error(EARGS);
@@ -5574,6 +5961,9 @@ void streval() {
   char* ir;
   address_t a;
   blocation_t l;
+#ifdef HASMSSTRINGS
+  token_t op;
+#endif
 
   /* is the right side of the expression a string */
   if (!stringvalue(&s1)) {
@@ -5593,6 +5983,16 @@ void streval() {
 
   /* is the next token a operator, hence we need to compare two strings? */
   nexttoken();
+#ifdef HASMSSTRINGS
+  /* MS style: < > <= >= compare two strings character by character, but only if a string
+     follows, otherwise the string is the code of its first character as before */
+  op = token;
+  if (op == '<' || op == '>' || op == LESSEREQUAL || op == GREATEREQUAL) {
+    nexttoken();
+    if (token == STRING || token == STRINGVAR || token == TSTR || token == TCHR ||
+        token == TLEFT || token == TRIGHT || token == TMID) goto secondstring;
+  }
+#endif
   if (token != '=' && token != NOTEQUAL) {
 
     /* if not, rewind one token and evaluate the string as a boolean */
@@ -5615,6 +6015,9 @@ void streval() {
   /* questionable !! */
   nexttoken();
 
+#ifdef HASMSSTRINGS
+secondstring:
+#endif
   if (DEBUG) {
     outsc("** in streval second string"); outcr();
     debugtoken(); outcr();
@@ -5626,6 +6029,32 @@ void streval() {
     return;
   }
   if (!USELONGJUMP && er) return;
+
+#ifdef HASMSSTRINGS
+  /* the order of two strings, the first different character decides, then the length */
+  if (op == '<' || op == '>' || op == LESSEREQUAL || op == GREATEREQUAL) {
+    int c = 0;
+    char c1, c2;
+
+    for (k = 0; k < s1.length && k < s2.length; k++) {
+      c1 = s1.ir ? s1.ir[k] : memread2(s1.address + k);
+      c2 = s2.ir ? s2.ir[k] : memread2(s2.address + k);
+      if (c1 != c2) {
+        c = (unsigned char)c1 - (unsigned char)c2;
+        break;
+      }
+    }
+    if (c == 0) c = (int)s1.length - (int)s2.length;
+    switch (op) {
+      case '<': c = (c < 0); break;
+      case '>': c = (c > 0); break;
+      case LESSEREQUAL: c = (c <= 0); break;
+      default: c = (c >= 0);
+    }
+    if (c) push(booleanmode); else push(0);
+    return;
+  }
+#endif
 
   if (DEBUG) {
     outsc("** in streval result: ");
@@ -6071,52 +6500,28 @@ void factorinstr() {
   }
 
   /* health check */
-  if (search.length == 0 || search.length + a > s.length || a == 0) {
+  if (search.length == 0 || a == 0 || a + search.length - 1 > s.length) {
     push(0);
     return;
   }
 
-  /* go through the search string */
-  while (i <= search.length) {
-
-    /* get one character from the string */
-    if (search.address) {
-      ch = memread2(search.address + i - 1);
-    } else {
-      ch = search.ir[i - 1];
-    }
-
-    /* search the character */
-    if (s.address) {
-      for (; a <= s.length; a++) {
-        if (memread2(s.address + a - 1) == ch) break;
-      }
-    } else {
-      for (; a <= s.length; a++) {
-        if ( s.ir[a - 1] == ch ) break;
+  /* compare the whole search string at every position from a on */
+  for (; a + search.length - 1 <= s.length; a++) {
+    for (i = 1; i <= search.length; i++) {
+      if (search.address) ch = memread2(search.address + i - 1); else ch = search.ir[i - 1];
+      if (s.address) {
+        if (memread2(s.address + a + i - 2) != ch) break;
+      } else {
+        if (s.ir[a + i - 2] != ch) break;
       }
     }
-
-    /* we haven't found the character until the end of the string */
-    if (a > s.length) {
-      a = 0;
-      break;
+    if (i > search.length) {
+      push(a);
+      return;
     }
-
-    /* next character */
-    i += 1;
-
   }
 
-  /* how did the search go? a rewind because we were at the end of the search part already */
-  if (i <= search.length) {
-    a = 0;
-  } else {
-    a = a - search.length + 1;
-  }
-
-
-  push(a);
+  push(0);
 }
 #endif
 
@@ -6136,7 +6541,6 @@ void factornetstat() {
 void factorasc() {
 #ifdef HASAPPLE1
   string_t s;
-  lhsobject_t lhs;
 
   nexttoken();
   if ( token != '(') {
@@ -6145,25 +6549,17 @@ void factorasc() {
   }
 
   nexttoken();
-  switch (token) {
-    case STRING:
-      if (sr.ir) push(sr.ir[0]); else push(memread2(sr.address));
-      nexttoken();
-      break;
-    case STRINGVAR:
-      parsestringvar(&s, &lhs);
-      if (s.length > 0) {
-        if (s.ir) push(s.ir[0]); else push(memread2(s.address));
-      } else
-        push(0);
-      nexttoken();
-      break;
-    default:
-      error(EARGS);
-      return;
+  /* any string value, so that ASC(MID$(A$,I,1)) works */
+  if (!stringvalue(&s)) {
+    error(EARGS);
+    return;
   }
-
   if (!USELONGJUMP && er) return;
+  if (s.length > 0) {
+    if (s.ir) push(s.ir[0]); else push(memread2(s.address));
+  } else
+    push(0);
+  nexttoken();
 
   if (token != ')') {
     error(EARGS);
@@ -6203,6 +6599,15 @@ void factor() {
     case TRND:
       parsefunction(xrnd, 1);
       break;
+    case TSTICK:
+      parsefunction(xstick, 1);
+      break;
+    case TSTRIG:
+      parsefunction(xstrig, 1);
+      break;
+    case TPTRIG:
+      parsefunction(xptrig, 1);
+      break;
     case TSIZE:
       push(himem - top);
       break;
@@ -6227,14 +6632,16 @@ void factor() {
     case TSENSOR:
       parsefunction(xfsensor, 2);
       break;
+    case TWIRE:
+      parsefunction(xfwire, 1);
+      break;
+#endif
+#if defined(HASIOT) || defined(HASMSSTRINGS)
     case TVAL:
       factorval();
       break;
     case TINSTR:
       factorinstr();
-      break;
-    case TWIRE:
-      parsefunction(xfwire, 1);
       break;
 #endif
 #ifdef HASERRORHANDLING
@@ -6248,7 +6655,7 @@ void factor() {
     /* Apple 1 string compare code */
     case STRING:
     case STRINGVAR:
-#ifdef HASIOT
+#if defined(HASIOT) || defined(HASMSSTRINGS)
     case TSTR:
 #endif
 #ifdef HASMSSTRINGS
@@ -6278,6 +6685,11 @@ void factor() {
       parsefunction(xusr, 2);
       break;
 #endif
+#if defined(HASARDUINOIO) || defined(STM32)
+    case TMILLIS:
+      parsefunction(bmillis, 1);
+      break;
+#endif
       /* Arduino I/O */
 #ifdef HASARDUINOIO
     case TAREAD:
@@ -6285,9 +6697,6 @@ void factor() {
       break;
     case TDREAD:
       parsefunction(xdread, 1);
-      break;
-    case TMILLIS:
-      parsefunction(bmillis, 1);
       break;
 #ifdef HASPULSE
     case TPULSE:
@@ -6692,6 +7101,13 @@ processsymbol:
     outs(s.ir, s.length);
 
     nexttoken();
+#ifdef HASMSSTRINGS
+    /* MS style PRINT A$+B$, the next term follows directly */
+    if (token == '+') {
+      nexttoken();
+      goto processsymbol;
+    }
+#endif
     goto separators;
   }
 
@@ -6724,6 +7140,14 @@ processsymbol:
   if (token != ',' && token != ';') {
     expression();
     if (!USELONGJUMP && er) return;
+#ifdef HASMSSTRINGS
+    if (msnumbers && form == 0) {
+      number_t n = pop();
+      if (n >= 0) outspc();
+      outnumber(n);
+      outspc();
+    } else
+#endif
     outnumber(pop());
   }
 
@@ -7151,6 +7575,7 @@ again:
         /* if we have no buffer or are at the end, read it and set cursor k to the beginning */
         if (k == 0 || (address_t) buffer[0] < k) {
           if (prompt) showprompt();
+          cursor_clamp_to_window();
           inputActive = true;
           (void) ins(buffer, bufsize);
           inputActive = false;
@@ -7223,9 +7648,19 @@ again:
 
         /* now read the string inplace */
         if (prompt) showprompt();
+        cursor_clamp_to_window();
         inputActive = true;
 #ifndef USEMEMINTERFACE
         newlength = ins(s.ir - 1, maxlen);
+#if defined(BREAKCHAR)
+        /* the break key ends the program like in a number input */
+        if (newlength > 0 && s.ir[0] == BREAKCHAR) {
+          inputActive = false;
+          st = SINT;
+          token = EOL;
+          goto resetinput;
+        }
+#endif
 #else
         newlength = ins(spistrbuf1, maxlen);
 
@@ -7833,11 +8268,65 @@ void listlines(address_t b, address_t e) {
   if (st != SINT) here = here2;
 }
 
+static void geteefilename(char *buffer); /* real definition further down - see its own forward declaration there for why */
+
 void xlist() {
   address_t b, e;
 
   /* get the argument */
   nexttoken();
+
+#ifdef STM32
+  /* LIST "En:file" - detokenized text export to the TinyELF filesystem,
+     see the LIST/ENTER project plan. Only a literal string target is
+     recognized here (token==STRING) rather than trying to disambiguate
+     every possible string expression - a variable/expression target is a
+     documented limitation for this pass; anything else falls through to
+     the existing numeric line-range parsing below, unchanged. */
+  if (token == STRING) {
+    char filename[SBUFSIZE];
+    mem_t ood = od;
+
+    geteefilename(filename);
+    if (!USELONGJUMP && er) return;
+
+    if (!sdlistopen(filename)) {
+      error(EEEPROM);
+      return;
+    }
+
+    od = OEEPROM;
+    listlines(0, maxaddr);
+    od = ood;
+
+    if (!sdlistclose()) {
+      error(EEEPROM);
+      return;
+    }
+
+    /* listlines() scans the PROGRAM via gettoken() (reading from mem[]/
+       here), which shares the same global 'token' the interactive command
+       line parser (nexttoken(), reading from ibuffer/bi) uses - after the
+       scan, 'token' holds whatever it last saw in the program, not the
+       interactive line's end-of-statement state. The original numeric
+       LIST path re-syncs this with a trailing nexttoken() below
+       listlines(); this branch needs the exact same fix (confirmed on
+       real hardware: without it, a stray "Error 10"/EUNKNOWN appears
+       right after a successful LIST "En:file", from termsymbol() seeing
+       the wrong token).
+
+       Also, sdlistopen()/eepromwrite() collect the output in ibuffer (see
+       runtime.c), which overwrote the original "LIST ..." command line -
+       so, like xenter(), reset ibuffer to a clean empty line before
+       re-syncing instead of just calling nexttoken() on stale content. */
+    ibuffer[0] = 0;
+    ibuffer[1] = 0;
+    bi = ibuffer + 1;
+    nexttoken();
+    return;
+  }
+#endif
+
   parsearguments();
   if (!USELONGJUMP && er) return;
 
@@ -7866,6 +8355,100 @@ void xlist() {
   /* we are done */
   nexttoken();
 }
+
+/*
+ 	ENTER "En:file" - reads a text-format program from the TinyELF
+ 	filesystem, tokenizing each line exactly as if it had been typed - the
+ 	reverse of LIST "En:file". See the LIST/ENTER project plan. Mirrors the
+ 	FILESYSTEMDRIVER xload() variant's own text-format loading loop above
+ 	almost exactly (bi/ibuffer[1..] convention, '#'-comment skip, the same
+ 	NUMBER-token-triggers-storeline() idiom used by xeval() and the main
+ 	interactive loop) - just reading from sdenteropen()/sdenterchunk()
+ 	instead of ifileopen()/fileavailable()/fileread().
+
+ 	Deliberately MERGES into whatever program is already in memory (no
+ 	implicit NEW first) - matches classic Atari DOS 2.x ENTER semantics
+ 	(confirmed with the user): a line number already in memory is
+ 	replaced, everything else is untouched. Call NEW first for a clean
+ 	slate if that's what's wanted.
+*/
+#ifdef STM32
+void xenter() {
+  char filename[SBUFSIZE];
+  uint8_t chunk[256];
+  uint16_t chunkLen = 0, chunkPos = 0;
+  uint8_t ch;
+
+  nexttoken();
+  geteefilename(filename);
+  if (!USELONGJUMP && er) return;
+
+  if (!sdenteropen(filename)) {
+    error(EFILE);
+    return;
+  }
+
+  bi = ibuffer + 1;
+  for (;;) {
+    if (chunkPos >= chunkLen) {
+      chunkLen = sdenterchunk(chunk, sizeof(chunk));
+      chunkPos = 0;
+      if (chunkLen == 0) break; /* end of chain */
+      if (chunkLen == SD_ENTER_ERROR) { /* broken sector chain / read error */
+        error(EFILE);
+        break;
+      }
+
+      /* No frame is rendered between the chunks: like LOAD, the screen
+         stays in the storage colour while ENTER runs. The long gaps without
+         a frame used to hang the console, which the UCA firmware's
+         vcsEndOverblank() fix (sync to the WaitForCart loop at $00A9)
+         solved; a frame per chunk also cost one frame per sector. */
+    }
+    ch = chunk[chunkPos++];
+
+    if (ch == '\n' || ch == '\r') {
+      *bi = 0;
+      bi = ibuffer + 1;
+      if (*bi != '#') { /* lines starting with a # are skipped - Unix style shell startup, same as xload()'s text path */
+        nexttoken();
+        if (token == NUMBER) {
+          ax = x;
+          storeline();
+        }
+        if (er != 0) break;
+        bi = ibuffer + 1;
+      }
+    } else {
+      *bi++ = (char)ch;
+    }
+
+    if ((bi - ibuffer) > BUFSIZE) {
+      error(EOUTOFMEMORY);
+      break;
+    }
+  }
+
+  /* This loop reused ibuffer/bi (the interactive input line's own buffer)
+     to hold each FILE line's content, completely overwriting whatever was
+     left of the original "ENTER ..." command line - unlike LIST's fix
+     (which only needed a re-sync nexttoken(), since listlines() uses a
+     separate here/mem[] cursor and never touches ibuffer), there is
+     nothing left here to re-sync TO. Explicitly reset to a clean empty
+     line instead - same pattern xedit() uses at its own "endnosave" exit
+     for the same reason (confirmed on real hardware: without this, a
+     stray "Error 10"/EUNKNOWN appears right after a successful ENTER
+     "En:file", same class of bug as LIST's, different root cause). */
+  ibuffer[0] = 0;
+  ibuffer[1] = 0;
+  bi = ibuffer + 1;
+  nexttoken();
+}
+#else
+void xenter() {
+  nexttoken();
+}
+#endif
 
 /*
    The progam line editor, first version. The code is
@@ -8469,6 +9052,345 @@ void xtab() {
    locate the curor on the screen
 */
 
+/* GRAPHICS n - switches between the normal 36-column text mode (0), the
+   18-column double-width mode (1), and the windowed modes 3/8 (the
+   actual playfield/pixel graphics drawing for those two comes later -
+   this just sets up the 3-line scrollable text window at the bottom
+   and leaves the graphics area blank). Follows the Atari BASIC modifier
+   convention (mode in the low nibble, +16/+32 as separate bits in the
+   high nibble): +16 (no text window) is a no-op for the two pure-text
+   modes 0/1, +32 (no clear) is honoured for all modes. */
+static uint8_t gfxLastX = 0, gfxLastY = 0;
+
+void xgraphics() {
+  number_t n;
+  uint8_t mode, noTextWindow, noClear;
+  nexttoken();
+  expression();
+  if (er != 0) return;
+  n = pop();
+  mode = (uint8_t)(n & 0x0F);
+  noTextWindow = (uint8_t)(n & 0x10);
+  noClear = (uint8_t)(n & 0x20);
+  if (mode != 0 && mode != 1 && mode != 3 && mode != 8) {
+    error(EORANGE);
+    return;
+  }
+  graphicsMode = mode;
+  rowLength = (mode == 1) ? ROW_LENGTH_G1 : ROW_LENGTH_G0;
+  windowHeight = (mode == 3 || mode == 8) ? (noTextWindow ? 0 : 3) : 0;
+  gfxLastX = 0;
+  gfxLastY = 0;
+  if (!noClear) outch(12); /* clears videoRAM and resets the cursor for the new mode */
+}
+
+/* GRAPHICS 8 high-resolution PLOT/DRAWTO pixel mapping, derived empirically
+   on real hardware (see session log). The 18 player columns of a text row
+   give 144 possible bit positions, but the fine (HMOVE) positioning of
+   adjacent players is not pixel-perfect and there is a missile object sat
+   between column 0 and column 1. To keep DRAWTO's line slopes geometrically
+   correct end to end, the virtual coordinate space counts every physical
+   screen column - including the ones that can never be lit - rather than
+   skipping over them, so each step of x covers exactly one physical pixel
+   width. That gives 145 columns total (0..144), of which:
+     - 6 screen columns never carry any player bit at all (the missile
+       column plus 5 permanently dark "gaps" between certain column pairs)
+     - 4 screen columns where a column's bit 7 (its leftmost pixel) lands on
+       exactly the same physical position as the previous column's bit 0
+       (its rightmost pixel) - only the earlier one is ever written, so a
+       point there never gets lit by two objects at once (that would look
+       brighter due to the interlaced kernel)
+   Column 0's own bit 7 (hidden behind the left playfield border) is not
+   part of the space at all - x=0 is column 0's bit 6. */
+static const uint8_t plotColStartX[18] = {
+    0, 8, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 114, 122, 130, 138
+};
+static const uint8_t plotColTopBit[18] = {
+    6, 7, 7, 6, 7, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 6, 7, 6
+};
+static const uint8_t plotColNumBits[18] = {
+    7, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 7
+};
+
+/* vertically, each of the 14 text rows is 12 real (independently plottable)
+   scanlines tall, followed by one blind transition scanline that is never
+   lit - a 13-line repeating unit, matching the row/HMOVE timing done once
+   per text row in bloop()'s kernel. The very last physical row (row
+   NUM_OF_ROWS-1) has no transition after it at all - the kernel's row loop
+   only emits the transition `if (row < NUM_OF_ROWS - 1)` - so the overall
+   virtual grid is 13*NUM_OF_ROWS - 1 tall, not 13*NUM_OF_ROWS, when the
+   graphics area reaches all the way down to that last row (windowHeight
+   == 0). With a text window, the last graphics row still transitions
+   normally into the window, so no line is dropped there. */
+#define GFX8_ROW_UNIT 13
+
+/* maps a virtual x (0..144) to (column, bitmask); returns false for a gap
+   position, which callers treat as a silent no-op. */
+static bool plot_map_x(uint8_t x, uint8_t *col, uint8_t *bitmask) {
+  for (uint8_t c = 0; c < 18; c++) {
+    uint8_t start = plotColStartX[c];
+    uint8_t n = plotColNumBits[c];
+    if (x < start) break; /* x falls into the dark gap right before this column */
+    if (x < (uint8_t)(start + n)) {
+      *col = c;
+      *bitmask = (uint8_t)(1u << (plotColTopBit[c] - (x - start)));
+      return true;
+    }
+  }
+  return false;
+}
+
+/* highest legal y value (exclusive) for the current windowHeight */
+static address_t gfx8_max_y() {
+  uint8_t graphicsRows = NUM_OF_ROWS - windowHeight;
+  address_t h = (address_t)graphicsRows * GFX8_ROW_UNIT;
+  if (windowHeight == 0) h -= 1; /* no transition line follows the last physical row */
+  return h;
+}
+
+static bool gfx8_coord_valid(address_t x, address_t y) {
+  return (x < 145) && (y < gfx8_max_y());
+}
+
+/* sets one pixel, no bounds checking - callers must validate first */
+static void plot_pixel_raw(uint8_t x, uint8_t y) {
+  uint8_t row = (uint8_t)(y / GFX8_ROW_UNIT);
+  uint8_t sub = (uint8_t)(y % GFX8_ROW_UNIT);
+  uint8_t col, bitmask;
+
+  if (sub == GFX8_ROW_UNIT - 1) return; /* blind transition scanline */
+  if (!plot_map_x(x, &col, &bitmask)) return; /* dark gap */
+
+  int vline = (int)row * TEXT_HEIGHT * 20 + (int)sub * 20;
+  videoRAM[vline + col] |= bitmask;
+  /* byte 18 is a derived composite of columns 0 and 2 the kernel also
+     needs kept current, see vram_write_char_at() */
+  if (col == 0 || col == 2) {
+    videoRAM[vline + 18] = (uint8_t)((videoRAM[vline] & 0x07u) | (videoRAM[vline + 2] & 0xF8u));
+  }
+}
+
+/* GRAPHICS 3 PLOT/DRAWTO pixel mapping. Unlike GRAPHICS 8 this is plain
+   TIA playfield, so there are no gaps and no fine-position overlaps to
+   work around - just the well-known "crazy" PF0/PF1/PF2 bit order: PF0
+   uses only its upper nibble and reads backwards (bit4=first pixel of the
+   4, bit7=last), PF1 is a normal full byte (bit7=first of 8, bit0=last),
+   PF2 is a full byte again read backwards (bit0=first of 8, bit7=last).
+   playfieldShadowRAM was extended with a second PF0R/PF1R/PF2R triplet
+   (see PF_SHADOW_RAM_WIDTH) that main.c's row-rendering loop reloads
+   mid-scanline so the right half is independent instead of a hardware
+   mirror/repeat of the left - giving 40 columns (0..39) with the same
+   backwards/forwards/backwards pattern repeated for x=20..39. There is
+   only one pattern per 12-scanline text row (like real Atari GRAPHICS 3),
+   so y is simply the row index, not a scanline-level coordinate like
+   GRAPHICS 8's. */
+static bool plot_map3_x(uint8_t x, uint8_t *byteIdx, uint8_t *bitmask) {
+  uint8_t half = (x < 20) ? 0 : 20;
+  uint8_t rightOfs = half ? 3 : 0; /* PF0/1/2 (2/3/4) -> PF0R/1R/2R (5/6/7) */
+  uint8_t lx = x - half; /* 0..19 within this half */
+
+  if (lx < 4) {
+    *byteIdx = 2 + rightOfs; /* PF0 (2) or PF0R (5) */
+    *bitmask = (uint8_t)(0x10u << lx); /* PF0: bit4=first pixel .. bit7=fourth */
+  } else if (lx < 12) {
+    *byteIdx = 3 + rightOfs; /* PF1 (3) or PF1R (6) */
+    *bitmask = (uint8_t)(0x80u >> (lx - 4));
+  } else {
+    *byteIdx = 4 + rightOfs; /* PF2 (4) or PF2R (7) */
+    *bitmask = (uint8_t)(0x01u << (lx - 12));
+  }
+  return true;
+}
+
+static address_t gfx3_max_y() {
+  return (address_t)(NUM_OF_ROWS - windowHeight);
+}
+
+static bool gfx3_coord_valid(address_t x, address_t y) {
+  return (x < 40) && (y < gfx3_max_y());
+}
+
+/* sets one pixel, no bounds checking - callers must validate first */
+static void plot_pixel_raw_gr3(uint8_t x, uint8_t y) {
+  uint8_t byteIdx, bitmask;
+  plot_map3_x(x, &byteIdx, &bitmask);
+  playfieldShadowRAM[(uint16_t)y * PF_SHADOW_RAM_WIDTH + byteIdx] |= bitmask;
+}
+
+/* PLOT x,y - lights a single pixel in GRAPHICS 3 or GRAPHICS 8 (whichever
+   is active) and remembers the position as the start point for a
+   following DRAWTO. Named xg8plot(), not xplot(), to avoid clashing with
+   the (currently unused, HASGRAPH-gated) generic framebuffer xplot()
+   further down in this file. */
+void xg8plot() {
+  address_t x, y;
+
+  nexttoken();
+  parsenarguments(2);
+  if (!USELONGJUMP && er) return;
+
+  y = popaddress();
+  x = popaddress();
+  if (!USELONGJUMP && er) return;
+
+  if (graphicsMode == 8) {
+    if (!gfx8_coord_valid(x, y)) { error(EORANGE); return; }
+    plot_pixel_raw((uint8_t)x, (uint8_t)y);
+  } else if (graphicsMode == 3) {
+    if (!gfx3_coord_valid(x, y)) { error(EORANGE); return; }
+    plot_pixel_raw_gr3((uint8_t)x, (uint8_t)y);
+  } else {
+    error(EORANGE);
+    return;
+  }
+
+  gfxLastX = (uint8_t)x;
+  gfxLastY = (uint8_t)y;
+}
+
+/* DRAWTO x,y - draws a line (Bresenham) from the last PLOT/DRAWTO position
+   to the new one, in whichever of GRAPHICS 3/8 is currently active. */
+void xg8drawto() {
+  address_t x1, y1;
+  int x0, y0, dx, dy, sx, sy, err, e2;
+  uint16_t steps = 0;
+  void (*setpixel)(uint8_t, uint8_t);
+
+  nexttoken();
+  parsenarguments(2);
+  if (!USELONGJUMP && er) return;
+
+  y1 = popaddress();
+  x1 = popaddress();
+  if (!USELONGJUMP && er) return;
+
+  if (graphicsMode == 8) {
+    if (!gfx8_coord_valid(x1, y1)) { error(EORANGE); return; }
+    setpixel = plot_pixel_raw;
+  } else if (graphicsMode == 3) {
+    if (!gfx3_coord_valid(x1, y1)) { error(EORANGE); return; }
+    setpixel = plot_pixel_raw_gr3;
+  } else {
+    error(EORANGE);
+    return;
+  }
+
+  x0 = gfxLastX;
+  y0 = gfxLastY;
+  dx = (x0 < (int)x1) ? ((int)x1 - x0) : (x0 - (int)x1);
+  sx = (x0 < (int)x1) ? 1 : -1;
+  dy = (y0 < (int)y1) ? (y0 - (int)y1) : ((int)y1 - y0); /* negative magnitude */
+  sy = (y0 < (int)y1) ? 1 : -1;
+  err = dx + dy;
+
+  for (;;) {
+    setpixel((uint8_t)x0, (uint8_t)y0);
+    if (x0 == (int)x1 && y0 == (int)y1) break;
+    e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+    if ((++steps & 0x3F) == 0) byield();
+  }
+
+  gfxLastX = (uint8_t)x1;
+  gfxLastY = (uint8_t)y1;
+}
+
+/* i2c_wait_settle() (the old ~30-frame blind wait before the first I2C op
+   of a command, to ride out KeyPortari still holding a just-pressed
+   RETURN's value on the shared SDA/SCL lines) is gone as of the KeyPortari
+   chip-enable line: KEYPORTARI_CE_MASK (bit7, see i2c_savekey.c) is now
+   folded into every SWACNT write the low-level I2C primitives make, so
+   i2c_start() - always the very first real bus op of any window - pulls
+   CE low as a side effect, which disables KeyPortari via its own IRQ
+   immediately, no settling time needed. Requires current KeyPortari
+   firmware (7-bit protocol with the CE line); testers must be on it,
+   confirmed with the user 2026-09-29 - no fallback for older firmware. */
+
+/* Meant to be called BETWEEN retry attempts
+   of a single write inside a long operation (FORMAT's ~500+ page writes),
+   not just once at the very start of a command. Real-hardware testing
+   showed FORMAT still failing occasionally even with 64 retries per
+   chunk, while SAVE (just 2 writes total) now works reliably - that
+   points to some disturbance recurring *during* a long I2C session, not
+   only right after the RETURN keypress that started it. Properly leaves
+   the I2C bus-stuffing session (re-enters overblank) for a few frames,
+   then re-enters it - callers must already be in the "outside overblank,
+   COLUBK/VBLANK set for I2C" state before calling this, and are again
+   afterward. Untested how many frames are actually needed here - 3 is a
+   starting guess, cheaper than the full 30 since it's meant to run many
+   times over a long operation. */
+void i2c_retry_pause(void) {
+  uint8_t i;
+  vcsWrite5(VBLANK, 2);
+  vcsStartOverblank();
+  for (i = 0; i < 3; i++) {
+    vcsEndOverblank();
+    renderDisplayFrame();
+    vcsStartOverblank();
+  }
+  vcsEndOverblank();
+  vcsWrite5(COLUBK, 0xa0);
+  vcsWrite5(VBLANK, 0);
+}
+
+/* FORMAT size - writes a disk header recording 'size' at address 0 (see
+   eedisk_header_write()/EEDISK_HEADER_SIZE in i2c_savekey.h) and blanks
+   the rest of the SaveKey-style I2C EEPROM up to 'size' (writes zero),
+   which also wipes any previous file directory. size is a byte count,
+   capped at 65536 since the underlying EEPROM addressing
+   (i2c_eeprom_write's uint16_t memaddr) only reaches one 64KB chip for
+   now - extend this once a second chip/device address is wired up (see
+   i2c_savekey.h). The disk header is what lets SAVE/LOAD/CATALOG recover
+   the real capacity after a reboot instead of trusting i2cEepromSize's
+   default (see eedisk_header_read()).
+
+   BASIC/bloop() only run during "overblank" (the 6507 looping in RIOT RAM
+   with the bus released, see vcsStartOverblank()/vcsEndOverblank()) - any
+   real vcsLib bus-stuffing call (which is all i2c_savekey.c does) needs us
+   to have actually left that state first. So this brackets the whole
+   operation: leave overblank, do all the I2C work, re-enter overblank
+   before returning. While outside overblank byield()/bloop() must NOT be
+   called (bloop() assumes the opposite state), so progress is shown by
+   cycling COLUBK directly instead of the usual token-budget yielding -
+   the periodic vcsJmp3() inside i2c_txbyte()/i2c_rxbyte() is what keeps
+   this safe over a long transaction, not byield(). */
+static void geteefilename(char *buffer); /* real definition further down - see its own forward declaration there for why */
+void xformat() {
+  char drivespec[SBUFSIZE];
+  number_t n = 0;
+
+  nexttoken();
+  geteefilename(drivespec); /* "En:" - see sdformat()'s comment in i2c_savekey.h */
+  if (!USELONGJUMP && er) return;
+
+  /* optional explicit size override - 0 (omitted) means auto, derived by
+     sdformat()/tinyelf_format() from the drive's own I2C address scan */
+  if (token == ',') {
+    nexttoken();
+    parsearguments();
+    if (args != 1) {
+      error(EARGS);
+      return;
+    }
+    n = pop();
+    if (!USELONGJUMP && er) return;
+  }
+
+  /* 262144 (256KiB) is this filesystem's own hard ceiling - the 10-bit
+     next-sector field can't address more sectors than that regardless of
+     which drive is targeted (see the E1-E8 drive-letter project plan) */
+  if (n < 0 || n > 262144) {
+    error(EORANGE);
+    return;
+  }
+
+  if (!sdformat(drivespec, (uint32_t)n)) {
+    error(EEEPROM);
+    return;
+  }
+}
+
 void xlocate() {
   address_t cx, cy;
 
@@ -8480,11 +9402,13 @@ void xlocate() {
   cx = popaddress();
   if (!USELONGJUMP && er) return;
 
-  /* for locate we go through the VT52 interface for cursor positioning*/
-  if (cx > 0 && cy > 0 && cx < 224 && cy < 224) {
-    outch(27); outch('Y');
-    outch(31 + (unsigned int) cy);
-    outch(31 + (unsigned int) cx);
+  /* This build has no VT52 parser on the video path (put_char() drops ESC
+     and would print the 'Y' and the position bytes as text), so set the
+     cursor directly. Coordinates are 1-based, the cell grid is 0-based. */
+  if (cx > 0 && cy > 0 && cx <= rowLength && cy <= NUM_OF_ROWS) {
+    cursor_reset();
+    tiaShadowRAM[CURSOR_COL] = (uint8_t)(cx - 1);
+    tiaShadowRAM[CURSOR_ROW] = (uint8_t)(cy - 1);
   }
 
   /* set the charcount, this is half broken on escape sequences */
@@ -8890,7 +9814,11 @@ void xget() {
   if (!USELONGJUMP && er) return;
 
   /* get the data, non blocking on Arduino */
-  if (availch()) ch = inch(); else ch = 0;
+  /* GET must not wait for a whole line: inch() goes through serialread(),
+     which line-buffers until RETURN. Take the single key straight from the
+     keyboard buffer instead (check_char/get_char). */
+  /* the break key stays in the buffer, the check after the statement stops the program */
+  if (check_char() && check_char() != BREAKCHAR) ch = get_char(); else ch = 0;
 
   /* store the data element as a number expect for */
   assignnumber2(&lhs, ch);
@@ -9143,6 +10071,11 @@ void xset() {
 #ifdef HASFLOAT
     case 24:
       precision = argument;
+      break;
+#endif
+#ifdef HASMSSTRINGS
+    case 25:
+      msnumbers = (argument != 0);
       break;
 #endif
   }
@@ -10059,16 +10992,65 @@ void xcatalog() {
   }
   rootclose();
 #elif defined(STM32)
-  serialload(0);
+  {
+    uint32_t pos = 0, size, capacity, freebytes;
+    char namebuf[EEDIR_MAX_FILENAME + 1];
+    char drivespec[SBUFSIZE];
+
+    nexttoken();
+    geteefilename(drivespec); /* "En:" - see sdcatalogopen()'s comment in i2c_savekey.h */
+    if (!USELONGJUMP && er) return;
+
+    if (!sdcatalogopen(drivespec)) { /* settles the bus, ends overblank, mounts - bus already released again on failure */
+      error(EEEPROM);
+      return;
+    }
+
+    /* sdcatalogfree() still needs real I2C (tinyelf_free_bytes() reads the
+       VTOC), so it has to run here, inside the disabled-blanking window.
+       sdcatalogsize() needs none at all (it's just the cached layout
+       struct from the mount above) - deliberately NOT called here; see
+       below, it runs after overblank is already back on, since it has no
+       business being in the bus-stuffed window in the first place. */
+    freebytes = sdcatalogfree(0);
+
+    while (sdcatalognext(&pos, namebuf, &size)) {
+      /* outscf()/outnumber() write to shadow videoRAM only (no vcsLib
+         calls of their own) but loop internally - precharge before this
+         plain ARM work, same as the old eedir_scan_next()-based loop's
+         vcsNop2n(10) at this exact point (see i2c_savekey.h history). */
+      vcsJmp3(); vcsNop2n(200);
+      outscf(namebuf, EEDIR_MAX_FILENAME); /* right-pad to fixed width */
+      outspc();
+      form = -5; /* left-pad to 5 digits - size is now a sector count, not bytes */
+      outnumber(size);
+      form = 0;
+      outcr();
+    }
+    /* sdcatalognext()'s final (failing) call already released the bus and
+       restarted overblank internally - no separate close call here.
+       Overblank is back on by this point, so sdcatalogsize() (pure lookup
+       on the layout struct cached by the mount above, no I2C at all) is
+       safe to call out here same as any normal ARM code. */
+    capacity = sdcatalogsize();
+
+    /* one line instead of two - screen is only 14 lines tall */
+    outsc("Size "); outnumber(capacity);
+    outsc(" (Free "); outnumber(freebytes); outsc(")"); outcr();
+  }
 #else
   nexttoken();
 #endif
 }
 
+/* forward declaration - real definition (needed by SAVE/LOAD too) is
+   further down, after xcatalog()/xdelete() in file order */
+static void geteefilename(char *buffer);
+
 /*
- 	DELETE a file
+ 	DELETE a file - always compiled (not only with HASFILEIO), the
+ 	TinyELF filesystem has its own delete
 */
-#ifdef HASFILEIO
 void xdelete() {
 #if defined(FILESYSTEMDRIVER)
   char filename[SBUFSIZE];
@@ -10078,11 +11060,24 @@ void xdelete() {
   if (!USELONGJUMP && er) return;
 
   removefile(filename);
+#elif defined(STM32)
+  {
+    char filename[SBUFSIZE];
+
+    nexttoken();
+    geteefilename(filename);
+    if (!USELONGJUMP && er) return;
+
+    switch (sddelete(filename)) {
+      case 1: break;
+      case SD_NODRIVE: error(EEEPROM); return;
+      default: error(EFILE); return; /* not found, or a write failed */
+    }
+  }
 #else
   nexttoken();
 #endif
 }
-#endif
 
 /*
  	OPEN a file or I/O stream - very raw mix of different functions
@@ -11422,7 +12417,7 @@ void statement() {
         xsave();
         break;
       case TLOAD:
-        xload();
+        xload(0);
         if (st == SINT) return; /* interactive load doesn't like break as the ibuffer is messed up; */
         else break;
 #ifdef HASSTEFANSEXT
@@ -11452,6 +12447,18 @@ void statement() {
         od = ax;
         nexttoken();
         break;
+      case TGRAPHICS:
+        xgraphics();
+        break;
+      case TG8PLOT:
+        xg8plot();
+        break;
+      case TG8DRAWTO:
+        xg8drawto();
+        break;
+      case TFORMAT:
+        xformat();
+        break;
 #ifdef HASSTEFANSEXT
       case TLOCATE:
         xlocate();
@@ -11464,6 +12471,11 @@ void statement() {
         break;
 #endif
         /* Arduino IO */
+#if defined(HASARDUINOIO) || defined(STM32)
+      case TDELAY:
+        xdelay();
+        break;
+#endif
 #ifdef HASARDUINOIO
       case TDWRITE:
         xdwrite();
@@ -11473,9 +12485,6 @@ void statement() {
         break;
       case TPINM:
         xpinm();
-        break;
-      case TDELAY:
-        xdelay();
         break;
 #ifdef HASTONE
       case TTONE:
@@ -11493,12 +12502,15 @@ void statement() {
         xcatalog();
         break;
       case TFTPCONN:
-        xcatalog(); // connection 
+        xcatalog(); // connection
         break;
-#ifdef HASFILEIO
+      case TENTER:
+        xenter();
+        break;
       case TDELETE:
         xdelete();
         break;
+#ifdef HASFILEIO
       case TOPEN:
         xopen();
         break;
@@ -11659,6 +12671,9 @@ void statement() {
     if (checkch() == BREAKCHAR) {
       st = SINT;
       if (od == 1) serialflush(); else xc = inch();
+#ifdef STM32
+      outcr(); /* READY on a line of its own */
+#endif
       return;
     }
 #else
@@ -11803,6 +12818,19 @@ errorhandler:
 void displaybanner() {
   int i;
   printmessage(MGREET);// outspc();
+#ifdef STM32
+  /* the memory size is only known at run time (ballocmem()). A line that
+     fills the row exactly wraps by itself; any other length needs its own
+     line end, or READY would follow on the same row */
+  {
+    long v = (long)memsize + 1;
+    int len = (int)sizeof(mgreet) - 1 + 11; /* greeting + " Bytes Free" */
+    do { len++; v /= 10; } while (v);
+    outnumber(memsize + 1);
+    outsc(" Bytes Free");
+    if (len % rowLength) outcr();
+  }
+#endif
 #ifdef HASERRORMSG
   printmessage(EOUTOFMEMORY); outspc();
   if (memsize < maxnum) outnumber(memsize + 1); else {
@@ -11836,6 +12864,21 @@ void displaybanner() {
  	the setup routine - Arduino style
 */
 void setup() {
+
+  /* fill the background color RAM for the active TV system (see
+     COL_BACKGROUND_NTSC/_PAL) - must happen before the first
+     renderDisplayFrame() call */
+  {
+    uint16_t i;
+    uint8_t bg;
+    switch (g_mainArgs[MP_SYSTEM_TYPE]) {
+      case ST_PAL_2600:
+      case ST_PAL60_2600: bg = COL_BACKGROUND_PAL;      break;
+      case ST_PAL_7800:   bg = COL_BACKGROUND_PAL_7800; break;
+      default:            bg = COL_BACKGROUND_NTSC;     break; /* ST_NTSC_2600, ST_NTSC_7800 */
+    }
+    for (i = 0; i < sizeof(bkColorRAM); i++) bkColorRAM[i] = bg;
+  }
 
   /* start measureing time */
 #ifdef HASTIME
@@ -11906,8 +12949,8 @@ void setup() {
   /* derive the render-cadence token budget from the actual clock speed
      in mainArgs[MP_CLOCK_HZ] - divisor tuned empirically on real
      hardware (stable up to ~356 tokens at 216MHz; 650000 gives ~332,
-     a safe margin below that). Correct the known Gopher2600 "70"
-     units bug; stored POKE/PEEK-able so it can be tuned live. */
+     a safe margin below that). Stored POKE/PEEK-able so it can be
+     tuned live. */
   {
     uint32_t clk = g_mainArgs[MP_CLOCK_HZ];
     tokenBudget = clk / 650000UL;
@@ -11944,6 +12987,11 @@ void loop() {
   /* always return to default io channels once interactive mode is reached */
   iodefaults();
   form = 0;
+
+  /* snap into the text window (if any) before READY - otherwise READY
+     itself prints wherever a program last left the cursor, e.g. right
+     under text it POKE'd into the graphics area above the window */
+  cursor_clamp_to_window();
 
   /* every return to interactive mode gets a READY, just like classic
      Atari BASIC - at boot (loop()'s first call falls straight through
@@ -12041,7 +13089,7 @@ int main(int argc, char* argv[]) {
 
 void send_uart_command(const unsigned char* pbuffer){
   uint8_t  c = 0;
-  while( (vcsRead4(SWCHA) != 0xff) ){
+  while( (vcsRead6(SWCHA) != 0xff) ){
     vcsJmp3();
   } // waiting for SWCHA ready
 
@@ -12101,36 +13149,35 @@ void serialload(unsigned char flag){
 
   send_uart_command(&ibuffer[1]);
 
-  while(! (vcsRead4(INPT5) & 0x80) ){
+  while(! (vcsRead6(INPT5) & 0x80) ){
     vcsJmp3();
   } // waiting for start bit getting high again
 
   vcsWrite5(COLUBK, bk);
 
   while(c != 4 && i<256){
-    while(vcsRead4(INPT5) & 0x80 ){
+    while(vcsRead6(INPT5) & 0x80 ){
       vcsJmp3();
     } // wait for start bit (RX low)
     vcsSleep(140); // 6
     vcsWrite5(COLUBK, bk);
     bk += 0x10;
 
-    c = vcsRead4(INPT5);
-    vcsSleep(119);
-    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
-    vcsSleep(118);
-    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
-    vcsSleep(119);
-    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
-    vcsSleep(119);
-    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
-    vcsSleep(119);
-    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
-    vcsSleep(118);
-    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
-    vcsSleep(119);
-    c = (c >> 1) | (vcsRead4(INPT5) & 0b10000000);
-    vcsNop2();
+    c = vcsRead6(INPT5);
+    vcsSleep(117);
+    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
+    vcsSleep(116);
+    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
+    vcsSleep(117);
+    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
+    vcsSleep(117);
+    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
+    vcsSleep(117);
+    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
+    vcsSleep(116);
+    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000);
+    vcsSleep(117);
+    c = (c >> 1) | (vcsRead6(INPT5) & 0b10000000); /* vcsRead6 includes the former trailing vcsNop2() */
     if(c == '\n' || c == '\r' || c == 4){
       vcsSleep(201);
       if(flag){
@@ -12164,14 +13211,78 @@ void serialload(unsigned char flag){
   nexttoken();
 }
 
-void xload() {
-  serialload(1);
+/* parses a quoted string filename argument. The obvious getfilename()
+   further up is gated behind "#if defined(FILESYSTEMDRIVER)", which is
+   not defined for this build, so it doesn't exist here - this is a
+   minimal replacement for SAVE/LOAD, built on the same (unconditional)
+   stringvalue()/stringtobuffer() the real one uses internally. */
+static void geteefilename(char *buffer) {
+  index_t s;
+  string_t sr;
+
+  s = stringvalue(&sr);
+  if (!USELONGJUMP && er) return;
+  if (!s) {
+    error(EUNKNOWN);
+    return;
+  }
+  stringtobuffer(buffer, &sr);
+  nexttoken();
 }
 
-void xsave() {
-  /* serial SAVE over the KeyPortari link is not implemented yet */
+/*
+ 	LOAD "name" - loads a program from the I2C EEPROM directory (see
+ 	i2c_savekey.h's eedir_* functions). f, if non-null, is used instead of
+ 	parsing a filename from the token stream - used for the autoexec.bas
+ 	boot load in autorun(), where the file quite normally doesn't exist
+ 	yet (nobody's saved one) - error() prints its message immediately
+ 	(it's not just a flag-set), so for that caller a missing file must
+ 	NOT go through error() at all, or every boot would show "Error 20"
+ 	before the file has ever been saved once. Interactive LOAD (f==0)
+ 	still gets the normal error() treatment.
+*/
+void xload(const char *f) {
+  char filename[SBUFSIZE];
+  uint32_t outsize;
+  mem_t quiet = (f != 0);
+
+  if (f == 0) {
+    nexttoken();
+    geteefilename(filename);
+    if (!USELONGJUMP && er) return;
+  } else {
+    index_t i;
+    for (i = 0; i < SBUFSIZE - 1 && f[i] != 0; i++) filename[i] = f[i];
+    filename[i] = 0;
+  }
+
+  if (!sdload(filename, mem, (uint32_t)memsize, &outsize)) {
+    if (quiet) er = EFILE; else error(EFILE);
+    return;
+  }
+
+  resetbasicstate(); /* reset interpreter state but keep the loaded program */
+  top = (address_t)outsize;
   nexttoken();
-  error(EUNKNOWN);
+}
+
+/*
+ 	SAVE "name" - saves the current program (mem[0..top)) to the I2C
+ 	EEPROM directory. Always appends - see eedir_append()'s comment in
+ 	i2c_savekey.h for why a same-named file isn't overwritten in place.
+*/
+void xsave() {
+  char filename[SBUFSIZE];
+
+  nexttoken();
+  geteefilename(filename);
+  if (!USELONGJUMP && er) return;
+
+  switch (sdsave(filename, mem, top)) {
+    case 1: break;
+    case SD_NODRIVE: error(EEEPROM); return;   /* no "En:", drive missing or not formatted */
+    default: error(EOUTOFMEMORY); return;      /* drive full, or a write failed */
+  }
 }
 
 void bsetup() {
@@ -12182,8 +13293,28 @@ void bsetup() {
 void bloop() {
   /* put your main code here, to run repeatedly: */
 
-  if(tokenCounter--)
+  /* LIST "En:file" streams its output to the EEPROM from inside one long
+     disabled-blanking window (sdlistopen()..sdlistclose()); outch() calls
+     byield() -> bloop() after every character, so without this the frame
+     render below would eventually fire inside that window (vcsEndOverblank()
+     while already out of overblank) and derail the 6507 - which happens
+     as soon as a listing is longer than the remaining tokenCounter budget.
+     CATALOG has the same problem: it holds its own disabled-blanking window
+     open (sdcatalogopen()..sdcatalognext()) across a loop that PRINTS each
+     entry through the normal display device (od stays e.g. ODSP, not
+     OEEPROM, so that check alone doesn't cover it) - see i2cWindowOpen's
+     comment in runtime.h. Confirmed on real hardware (2026-09-29): a
+     directory with enough present entries (but still under the 64-file
+     limit) crashed exactly this way; too few entries never printed enough
+     characters to exhaust tokenCounter/workCounter before the window closed
+     again, which is why it looked fine with only a handful of files. */
+  if (od == OEEPROM || i2cWindowOpen)
     return;
+
+  if (tokenCounter && workCounter) {
+    tokenCounter--;
+    return;
+  }
 
   cursor_update();
   vcsEndOverblank();
@@ -12191,32 +13322,24 @@ void bloop() {
   renderDisplayFrame();
   frameCounter++;
   tokenCounter = tokenBudget;
+  workCounter = (uint32_t)tokenBudget * TOKEN_WORK_FACTOR;
 
 
   // we are in VBLANK after renderDisplay
   // read controller and switch values from RIOT
 
   // RIOT shadow
-  riotShadowRAM[SWCHA & 0x1F] = vcsRead4(SWCHA);
-  vcsNop2();
-  riotShadowRAM[SWCHB & 0x1F] = vcsRead4(SWCHB);
-  vcsNop2();
-  riotShadowRAM[INTIM & 0x1F] = vcsRead4(INTIM);
-  vcsNop2();
+  riotShadowRAM[SWCHA & 0x1F] = vcsRead6(SWCHA);
+  riotShadowRAM[SWCHB & 0x1F] = vcsRead6(SWCHB);
+  riotShadowRAM[INTIM & 0x1F] = vcsRead6(INTIM);
 
   // TIA shadow
-  tiaShadowRAM[INPT0] = vcsRead4(INPT0);
-  vcsNop2();
-  tiaShadowRAM[INPT1] = vcsRead4(INPT1);
-  vcsNop2();
-  tiaShadowRAM[INPT2] = vcsRead4(INPT2);
-  vcsNop2();
-  tiaShadowRAM[INPT3] = vcsRead4(INPT3);
-  vcsNop2();
-  tiaShadowRAM[INPT4] = vcsRead4(INPT4);
-  vcsNop2();
-  tiaShadowRAM[INPT5] = vcsRead4(INPT5);
-  vcsNop2();
+  tiaShadowRAM[INPT0] = vcsRead6(INPT0);
+  tiaShadowRAM[INPT1] = vcsRead6(INPT1);
+  tiaShadowRAM[INPT2] = vcsRead6(INPT2);
+  tiaShadowRAM[INPT3] = vcsRead6(INPT3);
+  tiaShadowRAM[INPT4] = vcsRead6(INPT4);
+  tiaShadowRAM[INPT5] = vcsRead6(INPT5);
 
   vcsLda2(tiaShadowRAM[AUDC0]);
   vcsSta3(AUDC0);
@@ -12234,10 +13357,26 @@ void bloop() {
   vcsStartOverblank();
   tiaShadowRAM[EVEN_FRAME] = tiaShadowRAM[EVEN_FRAME] ? 0:1;
 
-  if(riotShadowRAM[SWCHA & 0x1F] != 0b11111111 && !key_restrainer){ // Key pressed
-    active_char = (char)riotShadowRAM[SWCHA & 0x1F];
+  // KeyPortari's ASCII protocol only drives D0-D6, D7 floats/reads high, so
+  // mask it off instead of using the raw byte as the idle/pressed sentinel.
+  uint8_t swcha_ascii = riotShadowRAM[SWCHA & 0x1F] & 0b01111111;
+
+  if(swcha_ascii != 0b01111111 && !key_restrainer){ // Key pressed
+    active_char = (char)swcha_ascii;
     key_restrainer = true;
-  }else if(riotShadowRAM[SWCHA & 0x1F] == 0b11111111 ){
+  }else if(swcha_ascii == 0b01111111 ){
     key_restrainer = false;
   }
+
+#ifdef TINYELF_TEST_SCRIPT
+  /* Emulator test hook (headless Gopher2600, no keyboard): types the
+     given string, one character per frame, after the banner is up.
+     Only compiled in when built with -DTINYELF_TEST_SCRIPT="\"...\"". */
+  {
+    static const char test_script[] = TINYELF_TEST_SCRIPT;
+    static uint16_t test_pos = 0;
+    if (frameCounter > 90 && active_char == '\0' && test_script[test_pos])
+      active_char = test_script[test_pos++];
+  }
+#endif
 }

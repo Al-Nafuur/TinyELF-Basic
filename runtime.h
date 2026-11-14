@@ -79,6 +79,7 @@
 #define OWIRE 7
 #define ORADIO 8
 #define OMQTT  9
+#define OEEPROM 10
 #define OFILE 16
 
 #define INULL 0
@@ -135,8 +136,18 @@ extern uint8_t charcount[5]; /* devices 0-4 support tabing */
 extern char ibuffer[BUFSIZE];
 
 /* only needed in POSIX worlds */
-extern uint8_t breaksignal; 
+extern uint8_t breaksignal;
 extern uint8_t vt52active;
+
+/* Set while a disabled-blanking I2C window (see tinyelf_fs.h) is held open
+   across code that also prints to the screen (CATALOG's per-entry loop is
+   the only case so far - LIST uses od==OEEPROM for the same purpose, but
+   CATALOG prints through the normal display device, not OEEPROM). bloop()
+   checks this the same way it already checks od==OEEPROM: printing calls
+   byield() after every character, and byield() calls bloop(), which must
+   not render a frame (vcsEndOverblank()) while we are already outside
+   overblank - see bloop()'s own comment for the full story. */
+extern uint8_t i2cWindowOpen;
 
 /* the string buffer the interpreter needs, here to be known by BASIC */
 extern char spistrbuf1[SPIRAMSBSIZE], spistrbuf2[SPIRAMSBSIZE];
@@ -306,6 +317,9 @@ void bdelay(uint32_t);
 void fastticker();
 void yieldfunction();
 uint32_t get_frame_counter(void);
+#ifdef STM32
+unsigned long millis(void); /* frame counter based, see runtime.c */
+#endif
 void longyieldfunction();
 void yieldschedule();
 

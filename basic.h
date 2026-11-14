@@ -38,6 +38,9 @@
 /* the maximum name length */
 #define MAXNAME         32
 
+/* the significant characters of a long name, 2 like in MS BASIC */
+#define SIGNAME         2
+
 /*
  * The tokens for the BASIC keywords
  *
@@ -185,7 +188,7 @@
 /* these are multibyte token extension, currently unused */
 /* using them would allow over 1000 BASIC keywords */
 #define TFTPCONN -9
-#define TEXT6 -8
+#define TENTER -8 /* ENTER "En:file" - see the LIST/ENTER project plan, another reserved extension slot repurposed same as TFTPCONN above */
 #define TEXT5 -7
 #define TEXT4 -6
 #define TEXT3 -5
@@ -216,6 +219,16 @@
 #define TSHL 9
 #define TSHR 11
 #define TBIT 12
+#define TGRAPHICS 13
+#define TSTICK 14
+#define TSTRIG 15
+#define TPTRIG 16
+/* named TG8xxx, not TPLOT/TDRAWTO, to avoid clashing with the unused
+   HASGRAPH framebuffer feature's TPLOT(-46)/TLINE(-45) further up */
+#define TG8PLOT 17
+#define TG8DRAWTO 18
+#define TFORMAT 19
+/* 20 was TEEREAD (EEREAD diagnostic, removed in v0.15) */
 /* 
  * Extension tokens can be in the range from -128 upwards.
  * one needs to set HASLONGTOKENS. Currently ony one set of 

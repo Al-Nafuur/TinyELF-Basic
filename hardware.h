@@ -36,7 +36,10 @@
  *		if MEMSIZE=0 a heuristic is used based on free heap
  *		size and architecture parameters
  */
-#define MEMSIZE 64512
+/* TinyELF: 0 = BASIC memory is not a static array in the ELF but a block
+   chosen at start-up by ballocmem() in main.c (the 64 KiB CCM on
+   PlusCart/UnoCart) - see tinyelf.ld */
+#define MEMSIZE 0
 
 /* 
  * Hardware flags of the POSIX systems 
@@ -102,7 +105,11 @@
  *  BREAKSIGNAL can also be set, should be done in hardware*.h
  */
 
+#ifdef STM32
+#define BREAKCHAR 27  /* ESC on the KeyPortari keyboard stops a TinyELF program */
+#else
 #define BREAKCHAR '#' /* the character to interrupt the interpreter */
+#endif
 
 /* set this is you want pin 4 on low interrupting the interpreter */
 /* #define BREAKPIN 4 */
