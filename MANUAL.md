@@ -43,7 +43,7 @@ and extended with everything that is specific to the Atari 2600 port.
 
 ### 1.1 What you need
 
-* An Atari 2600 (or compatible) with a **PlusCart** or **UnoCart** running a **current UCA firmware** (newer than v2.3.28).
+* An Atari 2600 (or compatible) with a **PlusCart** or **UnoCart** running **UCA firmware v2.3.32** or newer.
   TinyELF Basic uses the new vcsLib interface of the firmware and does not start on v2.3.28 or older.
   Chameleon Cart is untested.
 * A **KeyPortari** keyboard adapter in both joystick ports with the **latest KeyPortari firmware**. TinyELF Basic uses its
@@ -815,10 +815,11 @@ Operators: `+ - * / % ^  = < > <= >= <>  << >>`.
 * **SaveKey / AtariVox** I2C protocol – the bit-banging driver is a port of the 6507 driver by Alex Herbert
   (optimised by Thomas Jentzsch).
 * **SaveKey-Manager** – PC tool sharing the TinyELF on-disk format.
+* **Zachary Scolaro** – vcsLib and the ELF support in the UCA firmware.
 * **Gopher2600** (JetSetIlly) – emulator used for testing.
 
 This manual is derived from Stefan Lenz's `MANUAL.md` and, like the interpreter, is distributed under the
-GNU General Public License, version 3. *(Maintainers: please confirm the licence line before publishing.)*
+GNU General Public License, version 3.
 
 TinyELF Basic was first discussed in the AtariAge VCS-ELF Club:
 <https://forums.atariage.com/topic/385281-elf-basic-interpreter-for-the-2600>
