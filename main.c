@@ -6232,8 +6232,16 @@ void factorlen() {
     case TCHR:
 #endif
     case TSTR:
-      error(EARGS);
-      return;
+      /* a string function, evaluated like the argument of ASC(), VAL()
+         and INSTR(): LEN(MID$(A$,2,3)) */
+      if (!stringvalue(&s)) {
+        error(EUNKNOWN);
+        return;
+      }
+      if (!USELONGJUMP && er) return;
+      push(s.length);
+      nexttoken();
+      break;
     default:
       expression();
       if (!USELONGJUMP && er) return;

@@ -291,7 +291,7 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 | `SQR(x)` | Integer square root. **[UP]** |
 | `POW(a, b)` | a to the power b (0 for a negative exponent). **[UP]** |
 | `MAP(v, a, b, c, d)` | Maps `v` from range a…b to range c…d, like Arduino `map`. **[UP]** |
-| `LEN(s$)` | Length of a string. **[UP]** |
+| `LEN(s$)` | Length of a string. The argument can also be a string function: `LEN(MID$(A$,2))`. **[??]** |
 | `BIT(v, n)` | Non-zero if bit `n` of `v` is set. **[UP]** |
 | `SIZE` | Free memory between program and variables. **[UP]** |
 | `HIMEM` | Topmost free memory cell. **[UP]** |
