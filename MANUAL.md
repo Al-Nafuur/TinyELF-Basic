@@ -275,7 +275,7 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 | `SET 20, 0` | Switch off substring notation. |
 | `SET 21, 1` | `DIM A(10)` creates elements 0…10 (MS style). |
 | `SET 23, 1` | Allow lower-case names. |
-| `SET 25, 1` | Numbers in Microsoft style: `PRINT` puts a space before a positive number and after every number, `STR$(5)` is `" 5"`. **[??]** |
+| `SET 25, 1` | Numbers in Microsoft style: `PRINT` puts a space before a positive number and after every number, `STR$(5)` is `" 5"`. **[HW]** |
 
 > Do **not** use `SET 1` (EEPROM autorun flag of the Arduino versions) or `SET 2`…`SET 5` (output/input device switching);
 > they are inherited from other platforms and can lock you out.
@@ -299,7 +299,7 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 | `PEEK(a)` | See above. **[HW]** |
 | `STICK(n)`, `STRIG(n)`, `PTRIG(n)` | Controllers, see [chapter 6](#6-controllers-stick-strig-ptrig). **[HW]** |
 
-String functions **[??]**. Every string argument can be any string expression, also another function:
+String functions **[HW]**. Every string argument can be any string expression, also another function:
 `RIGHT$(STR$(X),2)`, `ASC(MID$(A$,I,1))`.
 
 | Function | Description |
@@ -347,7 +347,7 @@ Operators: `+ - * / %`, power `^`, comparisons `= < > <= >= <>`, logic `NOT AND 
 
 ## 4. Variables, strings, arrays and special variables
 
-### 4.1 Variables  **[??]**
+### 4.1 Variables  **[HW]**
 * A name starts with a letter, followed by letters, digits or `_`, up to 32 characters.
 * Like in Commodore and other Microsoft BASICs, **only the first two characters count**: `HIGH`, `HITS` and `HI`
   are the same variable. `LIST` shows each name as it was typed.
@@ -362,10 +362,10 @@ Operators: `+ - * / %`, power `^`, comparisons `= < > <= >= <>`, logic `NOT AND 
 * Substring notation: `A$(1,4)` is characters 1 to 4, `A$(6)` is from character 6 on.
   `A$(12)=" today"` appends/overwrites from position 12. `LEN(A$)` gives the length.
 * A string used in a numeric expression evaluates to the code of its first character.
-* Strings are compared with `=`, `<>`, `<`, `>`, `<=` and `>=` **[??]**: the first different character decides, a shorter
+* Strings are compared with `=`, `<>`, `<`, `>`, `<=` and `>=` **[HW]**: the first different character decides, a shorter
   string comes before a longer one that starts the same (`"AB"<"ABC"`).
 
-**MS-style strings** **[??]**: besides the substring notation there are the functions `LEFT$`, `RIGHT$`, `MID$`, `ASC`,
+**MS-style strings** **[HW]**: besides the substring notation there are the functions `LEFT$`, `RIGHT$`, `MID$`, `ASC`,
 `CHR$`, `STR$`, `VAL` and `INSTR` ([section 3.5](#35-functions)). `+` joins strings in an assignment and in `PRINT`:
 
 ```
