@@ -494,7 +494,7 @@ How a SaveKey affects these functions is not documented yet.
 | 4096… | `$1000` | **Video RAM**: the screen pixels, 20 bytes per scanline (3360 bytes, see [section 7.4](#74-video-ram)). |
 | 2048… | `$0800` | **Character RAM**: the redefinable character set, 12 bytes per character (see [section 7.3](#73-character-ram)). |
 | 1024… | `$0400` | **Background colour RAM**: one colour byte per graphics line (up to 182). |
-| 512… | `$0200` | **RIOT mirror RAM** (32 bytes), including the frame counter and the interpreter's token budget. |
+| 512… | `$0200` | **RIOT mirror RAM** (32 bytes), including the frame counter and the interpreter's time budget. |
 | 256… | `$0100` | **Text colour RAM**: one colour byte per text row (rows 0…13). |
 | 128… | `$0080` | **Playfield shadow RAM**: 8 bytes per text row (`COLUPF`, `CTRLPF`, `PF0`–`PF2` for the left half and the right half). |
 | 0…26 | `$00`–`$1A` | **TIA register shadow**: the sound registers (see [section 7.2](#72-sound)) and a few kernel variables. |
@@ -520,17 +520,23 @@ FOR I=0 TO 181: POKE 1024+I, 180: NEXT I
 | Address (dec) | Meaning |
 |---------------|---------|
 | 648…651 | **Frame counter**, 32 bit, low byte first. `PEEK(648)+256*PEEK(649)` gives the lower 16 bits. It counts 59.92 frames per second on an NTSC console and 59.38 on a PAL console. |
-| 652, 653 | **Token budget**, 16 bit, low byte first (see below). |
 | 654 | Height of the text window in `GRAPHICS 3` and `8`, in text rows (for example `POKE 654,7`). Default value is `3` |
+| 655 | **Overrun counter** (see below). |
+| 656, 657 | **Time budget** in microseconds, 16 bit, low byte first (see below). |
 
-The screen is redrawn after a number of interpreted tokens, the **token budget**. At start-up it is set from the CPU clock
-(clock / 650000, that is **332** on a 216 MHz cartridge). A smaller budget gives a steadier picture but slower programs,
-a larger one faster programs, but the picture can roll or go black while a long computation runs.
+The interpreter runs while the 6507 draws the lower and upper border of the picture on its own, the overblank: 3822 µs per frame on an NTSC console, 3857 µs on a PAL console. The **time budget** says how much of it BASIC may use before the next frame is drawn. At start-up it is 500 µs less than the overblank (3322 µs on NTSC, 3356 µs on PAL); the rest is a reserve for the last statement. A smaller time budget gives more reserve, a larger one faster programs.
+
+If the interpreter needs longer than the overblank, the frame gets longer and the picture jumps. The **overrun counter** counts these frames, up to 255; `POKE 655,0` sets it back to 0. A SaveKey command counts one frame too.
+
+A time budget above the overblank makes a long computation faster, up to about four times at 65535 µs, but every frame gets longer: the picture jumps or rolls, and `MILLIS`, `@T` and `DELAY`, which count frames, run slow. Raise it only for the computation and set it back afterwards:
 
 ```
-POKE 653,0: POKE 652,100     budget 100
-POKE 653,1: POKE 652,76      budget 332 (1*256+76)
+100 B0=PEEK(656): B1=PEEK(657): POKE 656,255: POKE 657,255
+110 REM ... long computation ...
+190 POKE 656,B0: POKE 657,B1
 ```
+
+Gopher2600 has no time measurement: there the time budget reads 0, and a frame is drawn after a fixed number of statements.
 
 ### 7.2 Sound  **[HW]**
 
@@ -811,9 +817,7 @@ Inside the handler `ERROR` used as a value is the error code. As with all error 
 * **`GRAPHICS` 2, 4–7, 9–11** are not implemented (error 16).
 * **Emulators:** Gopher2600 only emulates a SaveKey at address 0x50 (drive E1 only), and storage commands can fail
   there with error 23 or 20 (see [section 1.5](#15-emulators)).
-* **Long computations blank the screen.** While a statement or a run of statements takes longer than a frame, no picture
-  is generated; the TV may roll or show black until the next frame. This is harmless. The token budget ([section 7.1](#71-interpreter-values-in-the-riot-mirror-ram))
-  trades picture stability against speed.
+* **Long statements make the picture jump.** A single statement that runs longer than the reserve of the time budget ([section 7.1](#71-interpreter-values-in-the-riot-mirror-ram)) makes that frame longer; the TV may jump, roll or show black for a moment. This is harmless.
 * **7800:** On a 7800 (PAL) the first two and last two characters of a line can show faint artefacts from neighbouring
   characters. The 2600 is unaffected.
 * **Filesystem ceiling:** the on-disk format cannot address more than 256 KiB per drive.

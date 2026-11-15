@@ -339,13 +339,33 @@ uint32_t get_frame_counter(void) { return frameCounter; }
 static uint32_t frame_us = FRAME_US_NTSC;
 uint32_t get_frame_us(void) { return frame_us; }
 
-/* render-cadence token budget (statements executed between renders in
-   bloop()) - computed at boot from the real clock (see setup()), but
-   POKE/PEEK-able as a 16 bit value at TOKENBUDGET_ADDR/+1 (LSB first)
-   for interactive tuning without rebuilding: crank it up until the
-   picture starts to roll, then back off. */
-#define TOKENBUDGET_ADDR 0x28C
-#define tokenBudget (*(uint16_t*)&riotShadowRAM[TOKENBUDGET_ADDR & 0x1F])
+/* Frame cadence (see bloop()): after vcsStartOverblank() the 6507 runs
+   the 60-line custom overblank on its own (3822 us on NTSC, 3857 us on
+   PAL); if the ARM is not back by then, the 6507 waits in WaitForCart and
+   the frame gets longer than 262 lines - the picture jumps. BASIC
+   therefore runs for timeBudget microseconds after the overblank started,
+   then the next frame is rendered. Measured with the Cortex-M4 cycle
+   counter, which the UCA firmware uses too. Both POKE/PEEK-able:
+   timeBudget 16 bit at TIMEBUDGET_ADDR/+1 (LSB first), overrunCount 8 bit
+   = frames in which the ARM came back after the overblank had ended
+   (saturates at 255, POKE 0 to reset).
+   Without a cycle counter (Gopher2600 does not emulate it, a Cortex-M0+
+   has none) timeBudget stays 0 and the old token count decides instead:
+   tokenBudget statements, or tokenBudget * TOKEN_WORK_FACTOR tokens read,
+   per frame - set from the clock in setup(), not changeable. */
+static uint16_t tokenBudget = 10;
+#define OVERRUN_ADDR     0x28F
+#define overrunCount     (riotShadowRAM[OVERRUN_ADDR & 0x1F])
+#define TIMEBUDGET_ADDR  0x290
+#define timeBudget (*(uint16_t*)&riotShadowRAM[TIMEBUDGET_ADDR & 0x1F])
+#define TIMEBUDGET_RESERVE_US 500  /* time left for the last statement of a frame */
+
+#define DEMCR_REG    (*(volatile uint32_t*)0xE000EDFCu)
+#define DWT_CTRL_REG (*(volatile uint32_t*)0xE0001000u)
+#define DWT_CYCCNT   (*(volatile uint32_t*)0xE0001004u)
+static uint32_t cyclesPerUs = 0;      /* 0 = no cycle counter, token budget only */
+static uint32_t overblankCycles = 0;  /* length of the overblank in CPU cycles */
+static uint32_t frameStart = 0;       /* DWT_CYCCNT when the overblank started */
 
 /* height (in text rows) of the scrollable text window at the bottom of
    the screen when a windowed GRAPHICS mode (3/8) is active - 0 means no
@@ -1126,7 +1146,7 @@ void vcs_memwrite2(number_t address, number_t value){
     gfxFlat[address & 0x7ff] = (uint8_t)value;  // Check for (address & 0x7ff) <= 1296  (0x510)
   }else if (address & 0x400){              // Background color RAM
     bkColorRAM[address & 0x3ff] = value;   // Check for (address & 0x3ff) <=  182  (0x0b6)
-  }else if (address & 0x200){              // RIOT mirror RAM (incl. frameCounter and tokenBudget)
+  }else if (address & 0x200){              // RIOT mirror RAM (incl. frameCounter and timeBudget)
     riotShadowRAM[address & 0x1F] = (uint8_t)value;
   }else if (address & 0x100){              // Text color RAM
     txtColorRAM[address & 0x0f] = value;   // Check for (address & 0x0f) <=  14  (0x00e)
@@ -2007,6 +2027,14 @@ void bmillis() {
  * allocate it here at all.
  */
 
+#ifdef STM32
+/* Gopher2600 loads every section, code included, from 0x10000000 on (the
+   CCM on a real cartridge, which the ELF never occupies there) */
+static bool in_gopher(void) {
+  return (((uint32_t)&elf_main) & 0xF0000000u) == 0x10000000u;
+}
+#endif
+
 #if (!defined(MEMSIZE) || MEMSIZE == 0) && defined(STM32)
 /*
  * TinyELF: the BASIC memory is not part of the ELF image. Where it goes
@@ -2025,7 +2053,7 @@ void bmillis() {
 #define TINYELF_SRAM_BASE   0x20000000u
 #define TINYELF_GOPHER_MEM  0xC000u   /* 48 KiB, leaves 16 KiB below the emulator's stack */
 address_t ballocmem() {
-  if ((((uint32_t)&elf_main) & 0xF0000000u) == TINYELF_CCM_BASE) {
+  if (in_gopher()) {
     mem = (mem_t*)TINYELF_SRAM_BASE;
     return TINYELF_GOPHER_MEM - 1;
   }
@@ -5052,6 +5080,7 @@ address_t findinlinecache(address_t l) {
 */
 void findline(address_t l) {
   address_t a;
+  uint16_t n = 0;
 
   /* we know it already, here to advance */
   if ((a = findinlinecache(l))) {
@@ -5061,7 +5090,9 @@ void findline(address_t l) {
     return;
   }
 
-  /* we need to search */
+  /* we need to search - token by token from the start, which takes more
+     than a millisecond for a line near the end of a big program, so
+     frames are rendered in between (bloop() leaves here/token alone) */
   here = 0;
   while (here < top) {
     gettoken();
@@ -5070,6 +5101,7 @@ void findline(address_t l) {
       addlinecache(l, here);
       return;
     }
+    if ((++n & 0x3F) == 0) byield();
   }
   error(ELINE);
 }
@@ -11462,6 +11494,16 @@ void xdata() {
 /*
    for READ find the next data record, helper of READ
 */
+/* search the next DATA statement from here on - like findline(), frames
+   are rendered in between, the DATA lines can be far away */
+static void finddata() {
+  uint16_t n = 0;
+  while (here < top && token != TDATA) {
+    gettoken();
+    if ((++n & 0x3F) == 0) byield();
+  }
+}
+
 void nextdatarecord() {
   address_t h;
   mem_t s = 1;
@@ -11472,7 +11514,7 @@ void nextdatarecord() {
   /* data at zero means we need to init it, by searching the first data record */
   if (data == 0) {
     here = 0;
-    while (here < top && token != TDATA) gettoken();
+    finddata();
     data = here;
     datarc = 1;
   }
@@ -11516,7 +11558,7 @@ processdata:
   }
 
   if (termsymbol()) {
-    while (here < top && token != TDATA) gettoken();
+    finddata();
     data = here;
     goto processdata;
   }
@@ -12947,15 +12989,31 @@ void setup() {
   		the interpreter to got into autorun once loop is reached */
   if (!autorun()) displaybanner();
 
-  /* derive the render-cadence token budget from the actual clock speed
-     in mainArgs[MP_CLOCK_HZ] - divisor tuned empirically on real
-     hardware (stable up to ~356 tokens at 216MHz; 650000 gives ~332,
-     a safe margin below that). Stored POKE/PEEK-able so it can be
-     tuned live. */
+  /* frame cadence, see timeBudget. The token budget for systems without
+     a cycle counter comes from the clock in mainArgs[MP_CLOCK_HZ] -
+     divisor tuned empirically on real hardware before the time budget
+     existed (stable up to ~356 tokens at 216MHz; 650000 gives ~332). */
   {
     uint32_t clk = g_mainArgs[MP_CLOCK_HZ];
     tokenBudget = clk / 650000UL;
     if (tokenBudget < 1) tokenBudget = 10;
+
+    /* time-based cadence where the cycle counter exists: the overblank
+       is 60 of the frame's 262 lines */
+    if (!in_gopher() && clk >= 1000000UL) {
+      uint32_t c;
+      volatile uint8_t i;
+      DEMCR_REG |= (1UL << 24);        /* TRCENA: enable the DWT unit */
+      DWT_CTRL_REG |= 1UL;             /* CYCCNTENA */
+      c = DWT_CYCCNT;
+      for (i = 0; i < 10; i++) ;
+      if (DWT_CYCCNT != c) {
+        uint32_t overblank_us = frame_us * 60 / 262;
+        cyclesPerUs = clk / 1000000UL;
+        overblankCycles = overblank_us * cyclesPerUs;
+        timeBudget = overblank_us - TIMEBUDGET_RESERVE_US;
+      }
+    }
   }
 
   /* activate the BREAKPIN */
@@ -13187,12 +13245,21 @@ void bloop() {
   if (od == OEEPROM || i2cWindowOpen)
     return;
 
-  if (tokenCounter && workCounter) {
+  if (cyclesPerUs) {
+    /* time-based: BASIC may run until timeBudget us of the overblank are used */
+    if (DWT_CYCCNT - frameStart < (uint32_t)timeBudget * cyclesPerUs)
+      return;
+  } else if (tokenCounter && workCounter) {
     tokenCounter--;
     return;
   }
 
   cursor_update();
+  /* the 6507 had to wait for us: this frame is longer than 262 lines (the
+     first frame after power-on is not counted, setup() ran before it) */
+  if (cyclesPerUs && frameCounter && overrunCount < 255 &&
+      DWT_CYCCNT - frameStart > overblankCycles)
+    overrunCount++;
   vcsEndOverblank();
 
   renderDisplayFrame();
@@ -13231,6 +13298,7 @@ void bloop() {
   vcsSta3(AUDV1);
 
   vcsStartOverblank();
+  if (cyclesPerUs) frameStart = DWT_CYCCNT;
   tiaShadowRAM[EVEN_FRAME] = tiaShadowRAM[EVEN_FRAME] ? 0:1;
 
   // KeyPortari's ASCII protocol only drives D0-D6, D7 floats/reads high, so
