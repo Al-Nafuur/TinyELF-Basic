@@ -77,14 +77,16 @@ Stella cannot run TinyELF Basic: its ELF support emulates a Cortex-M0, TinyELF B
 
 ## Building
 
-The release is built with **GCC 14.2** (Arm GNU Toolchain 14.2.Rel1). Other GCC versions give a different binary; GCC 15 does not compile the sources yet.
+The release is built with **GCC 14.2** (Arm GNU Toolchain 14.2.Rel1). Other GCC versions give a different binary; GCC 15.2 builds a working one too.
+
+`make` builds `TinyELF-Basic-v<version>.bin`, with the version taken from the start banner in `main.c`. `make PREFIX=<path>/bin/arm-none-eabi-` selects a toolchain that is not on the `PATH`. `make check` shows the sizes and the symbols the ELF imports from the cartridge firmware. The build command is:
 
 ```
 arm-none-eabi-gcc -r -mlong-calls -fno-exceptions -fno-builtin-memmove -march=armv7-m -Os -Wall \
   -Wl,-T,tinyelf.ld *.c -o TinyELF-Basic-v0.20.bin -lgcc
 ```
 
-Run on a checkout of the tag `v0.20` (`git checkout v0.20`), this gives a byte-identical copy of the released `TinyELF-Basic-v0.20.bin`. The linker script `tinyelf.ld` keeps all variables out of `.bss`, so the whole 64 KB CCM RAM of the STM32 is free for BASIC programs.
+Run on a checkout of the tag `v0.20` (`git checkout v0.20`), this command (not that tag's older Makefile) gives a byte-identical copy of the released `TinyELF-Basic-v0.20.bin`. The linker script `tinyelf.ld` keeps all variables out of `.bss`, so the whole 64 KB CCM RAM of the STM32 is free for BASIC programs.
 
 ## Credits
 
