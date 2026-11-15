@@ -492,13 +492,15 @@ How a SaveKey affects these functions is not documented yet.
 
 | Address (dec) | Hex | Region |
 |---------------|-----|--------|
-| 4096… | `$1000` | **Video RAM**: the screen bitmap, 20 bytes per scanline (up to 3360 bytes). |
-| 2048… | `$0800` | **Character RAM**: the redefinable character set, 12 bytes per character (up to 1296 bytes). |
+| 4096… | `$1000` | **Video RAM**: the screen pixels, 20 bytes per scanline (3360 bytes, see [section 7.4](#74-video-ram)). |
+| 2048… | `$0800` | **Character RAM**: the redefinable character set, 12 bytes per character (see [section 7.3](#73-character-ram)). |
 | 1024… | `$0400` | **Background colour RAM**: one colour byte per graphics line (up to 182). |
 | 512… | `$0200` | **RIOT mirror RAM** (32 bytes), including the frame counter and the interpreter's token budget. |
 | 256… | `$0100` | **Text colour RAM**: one colour byte per text row (rows 0…13). |
 | 128… | `$0080` | **Playfield shadow RAM**: 8 bytes per text row (`COLUPF`, `CTRLPF`, `PF0`–`PF2` for the left half and the right half). |
 | 0…26 | `$00`–`$1A` | **TIA register shadow**: the sound registers (see [section 7.2](#72-sound)) and a few kernel variables. |
+
+Only use the addresses listed here. `PEEK` and `POKE` do not check them: a `POKE` to an "illegal" address outside these regions overwrites other memory, and weird things will happen, up to a crash.
 
 Colour values are TIA colour bytes (hue in the high nibble, luminance in the low nibble), e.g.
 
@@ -556,7 +558,65 @@ A tone keeps playing until its volume is set to 0, also after `END` or **ESC**. 
 The other addresses of the block are used by the kernel: 0…3 hold the character mask, the cursor column and row and
 the frame parity, 8…13 the last values read from `INPT0`…`INPT5`. Do not `POKE` addresses 0…3.
 
-*TODO for the next manual revision:* the character-code order in character RAM and the exact video RAM layout.
+### 7.3 Character RAM
+
+The character set lies in RAM and can be changed with `POKE`. It holds the ASCII codes 32 (space) to 127 in order, shifted by 32: the 12 bytes of character `code` start at `2048 + (code − 32) × 12`, one byte per scanline from top to bottom.
+
+| Code | Characters | Addresses |
+|------|------------|-----------|
+| 32 | space | 2048…2059 |
+| 48…57 | `0`…`9` | 2240…2359 |
+| 65…90 | `A`…`Z` | 2444…2755 |
+| 97…122 | `a`…`z` | 2828…3139 |
+| 127 | Delete | 3188…3199 |
+
+Codes 32…126 can be printed. Code 127 is Delete: printing it moves the cursor back, so its pattern is never shown. The 144 bytes after it (3200…3343) are unused.
+
+Every byte holds one pixel row of the character, which is 3 pixels wide:
+
+* The **low nibble** is the normal row: 4 = left, 2 = middle, 1 = right pixel. Bit 3 (value 8) is the gap column to the left of the character and is 0 in a normal character.
+* The **high nibble** is the same row inverted (15 minus the low nibble, so the gap column is lit). TinyELF Basic draws the blinking cursor with it.
+
+To redefine a row with the pattern `V` (0…7), poke `(15 − V) × 16 + V`. This makes `#` (code 35) a solid block:
+
+```
+FOR L=0 TO 11: POKE 2048+(35-32)*12+L, (15-7)*16+7: NEXT L
+```
+
+A change only affects characters printed afterwards: the screen holds pixels, not character codes (see [section 7.4](#74-video-ram)). `GRAPHICS 1` uses the same patterns with every pixel doubled in width.
+
+### 7.4 Video RAM
+
+The video RAM holds the pixels of the screen, not character codes: `PRINT` copies the character's pattern from the character RAM into it, and `PLOT` in `GRAPHICS 8` sets single bits in it. (`GRAPHICS 3` uses the playfield shadow RAM instead.) It is organised by text row and scanline:
+
+```
+address = 4096 + (row × 12 + line) × 20 + byte
+```
+
+* `row` is the text row 0…13, `line` the scanline within that row 0…11, from top to bottom. The 13th scanline of each row, the gap between two text rows, is not stored and always shows the background.
+* Every scanline has **20 bytes**. Bytes 0…17 are pixels, bytes 18 and 19 are needed by the display kernel. The whole area is 14 × 12 × 20 = 3360 bytes (4096…7455).
+
+**Bytes 0…17:** in `GRAPHICS 0`, byte `n` holds the two text columns `2n` and `2n+1`; in `GRAPHICS 1` it holds column `n` with every pixel doubled. Bit 7 is the leftmost pixel. In `GRAPHICS 0` every character cell is 4 pixels wide (gap column plus 3 pixels), but the TIA cannot place its objects exactly 8 pixels apart, so the two cells sit at slightly different bits from byte to byte:
+
+| Bytes | Left column (`2n`) | Right column (`2n+1`) |
+|-------|--------------------|-----------------------|
+| 1, 3, 5, 13, 15, 17 | gap bit 7, pixels bits 6…4 | gap bit 3, pixels bits 2…0 |
+| 2, 4, 6…12, 14, 16 | pixels bits 7…5 (no gap bit) | gap bit 4, pixels bits 3…1 |
+| 0 | gap bit 6, pixels bits 5…3 | gap bit 2, left and middle pixel bits 1…0, right pixel in byte 19 |
+
+Bit 0 of the bytes in the second line is only set by inverse characters (the cursor block). Bit 7 of byte 0 is hidden behind the left border.
+
+**Byte 18** is a copy the kernel needs: `(byte 0 AND 7) OR (byte 2 AND 248)`. After a `POKE` into byte 0 or byte 2 of a scanline, write byte 18 of that scanline as well.
+
+**Byte 19:** only bit 1 (value 2) is used. It switches a TIA missile that draws the right pixel of text column 1 (of column 0 in `GRAPHICS 1`). Write only 0 or 2 – the other bits end up in the TIA's horizontal motion register and shift the picture.
+
+The kernel shows every other byte of a scanline in one frame and the rest in the next, so a change is complete after two frames. The 20 bytes after the last scanline (7456…7475) belong to the kernel; do not change them.
+
+This draws a line under text row 0 (scanline 11) across bytes 0…18. A few single dark columns remain, where no TIA object can draw a pixel:
+
+```
+A=4096+11*20: FOR B=0 TO 18: POKE A+B, 255: NEXT B
+```
 
 ---
 
