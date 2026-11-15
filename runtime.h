@@ -317,6 +317,7 @@ void bdelay(uint32_t);
 void fastticker();
 void yieldfunction();
 uint32_t get_frame_counter(void);
+uint32_t get_frame_us(void); /* length of one frame in microseconds */
 #ifdef STM32
 unsigned long millis(void); /* frame counter based, see runtime.c */
 #endif

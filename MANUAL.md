@@ -150,8 +150,7 @@ The **ESC** key stops a running program from the keyboard **[HW]**.
 At the prompt: continue after `STOP`. Inside a `FOR` loop: skip the rest of the loop body and go to the next iteration.
 
 #### `DELAY ms`  **[??]**
-Pauses the program for `ms` milliseconds; the screen keeps running while it waits. TinyELF Basic always runs at
-60 frames per second (also on PAL consoles), so the time is rounded up to whole frames of 1/60 s.
+Pauses the program for `ms` milliseconds; the screen keeps running while it waits. The time is rounded up to whole frames of about 17 ms (see `MILLIS`), so `DELAY 1000` waits 60 frames: 1001 ms on an NTSC console, 1010 ms on a PAL console. In a loop this rounding adds up; for a clock, compare with `MILLIS` instead of counting `DELAY`s.
 
 ```
 10 PRINT "Wait...": DELAY 2000: PRINT "Go!"
@@ -296,7 +295,7 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 | `BIT(v, n)` | Non-zero if bit `n` of `v` is set. **[UP]** |
 | `SIZE` | Free memory between program and variables. **[UP]** |
 | `HIMEM` | Topmost free memory cell. **[UP]** |
-| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Counts in steps of one frame (1/60 s). **[??]** |
+| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Counts in steps of one frame: 16.69 ms on an NTSC console, 16.84 ms on a PAL console. NTSC or PAL is taken from the TV mode in the cartridge menu (PAL60 counts as PAL). **[??]** |
 | `PEEK(a)` | See above. **[HW]** |
 | `STICK(n)`, `STRIG(n)`, `PTRIG(n)` | Controllers, see [chapter 6](#6-controllers-stick-strig-ptrig). **[HW]** |
 
@@ -520,7 +519,7 @@ FOR I=0 TO 181: POKE 1024+I, 180: NEXT I
 
 | Address (dec) | Meaning |
 |---------------|---------|
-| 648…651 | **Frame counter**, 32 bit, low byte first. `PEEK(648)+256*PEEK(649)` gives the lower 16 bits. |
+| 648…651 | **Frame counter**, 32 bit, low byte first. `PEEK(648)+256*PEEK(649)` gives the lower 16 bits. It counts 59.92 frames per second on an NTSC console and 59.38 on a PAL console. |
 | 652, 653 | **Token budget**, 16 bit, low byte first (see below). |
 | 654 | Height of the text window in `GRAPHICS 3` and `8`, in text rows (for example `POKE 654,7`). Default value is `3` |
 
@@ -847,7 +846,7 @@ For readers who know Stefan's original `MANUAL.md`: the following parts **do not
 the E1–E8 filesystem, the hardware memory map for `PEEK`/`POKE`.
 
 **Different in TinyELF Basic:** long variable names follow the Microsoft rule, only the first two characters are significant
-([section 4.1](#41-variables)). `MILLIS` and `DELAY` count in frames of 1/60 s. ESC instead of `#` stops a program.
+([section 4.1](#41-variables)). `MILLIS` and `DELAY` count in frames of about 17 ms. ESC instead of `#` stops a program.
 `SET 25` (Microsoft style numbers) and the string comparisons with `<`, `>`, `<=`, `>=` are TinyELF additions.
 
 ---

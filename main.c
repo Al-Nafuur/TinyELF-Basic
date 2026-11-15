@@ -329,6 +329,16 @@ uint8_t riotShadowRAM[0x20] __attribute__((aligned(4))) = { [0 ... 0x1F] = 0 };
    byield()-call count, to approximate real time) */
 uint32_t get_frame_counter(void) { return frameCounter; }
 
+/* length of one frame in microseconds, for millis() and bdelay() in
+   runtime.c. The kernel always draws 262 lines of 76 CPU cycles (NTSC
+   line timing), so the frame rate follows the console's CPU clock:
+   1.193182 MHz on NTSC (59.92 Hz), 1.182298 MHz on PAL, also with the
+   PAL60 setting (59.38 Hz). Set in setup() from MP_SYSTEM_TYPE. */
+#define FRAME_US_NTSC 16688
+#define FRAME_US_PAL  16842
+static uint32_t frame_us = FRAME_US_NTSC;
+uint32_t get_frame_us(void) { return frame_us; }
+
 /* render-cadence token budget (statements executed between renders in
    bloop()) - computed at boot from the real clock (see setup()), but
    POKE/PEEK-able as a 16 bit value at TOKENBUDGET_ADDR/+1 (LSB first)
@@ -12848,15 +12858,17 @@ void setup() {
 
   /* fill the background color RAM for the active TV system (see
      COL_BACKGROUND_NTSC/_PAL) - must happen before the first
-     renderDisplayFrame() call */
+     renderDisplayFrame() call - and set the frame length (see frame_us) */
   {
     uint16_t i;
     uint8_t bg;
+    frame_us = FRAME_US_PAL;
     switch (g_mainArgs[MP_SYSTEM_TYPE]) {
       case ST_PAL_2600:
       case ST_PAL60_2600: bg = COL_BACKGROUND_PAL;      break;
       case ST_PAL_7800:   bg = COL_BACKGROUND_PAL_7800; break;
-      default:            bg = COL_BACKGROUND_NTSC;     break; /* ST_NTSC_2600, ST_NTSC_7800 */
+      default:            bg = COL_BACKGROUND_NTSC;     /* ST_NTSC_2600, ST_NTSC_7800 */
+                          frame_us = FRAME_US_NTSC;     break;
     }
     for (i = 0; i < sizeof(bkColorRAM); i++) bkColorRAM[i] = bg;
   }

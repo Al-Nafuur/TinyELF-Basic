@@ -1230,23 +1230,27 @@ void bdelay(uint32_t t) {
   }
 }
 #else
-/* No clock on this target: time comes from the real frame counter.
-   TinyELF always runs at 60 Hz, also on PAL consoles (PAL60), so one frame
-   is 1000/60 ms. byield() itself fires per statement/character, not per
-   frame, so counting byield() calls has no fixed relationship to elapsed
-   time - only get_frame_counter() does. Waiting through byield() keeps
-   rendering frames, so the picture stays stable during DELAY. */
+/* No clock on this target: time comes from the real frame counter and the
+   length of one frame, get_frame_us() - 16688 us on NTSC consoles, 16842 us
+   on PAL consoles (see frame_us in main.c). byield() itself fires per
+   statement/character, not per frame, so counting byield() calls has no
+   fixed relationship to elapsed time - only get_frame_counter() does.
+   Waiting through byield() keeps rendering frames, so the picture stays
+   stable during DELAY. */
 void bdelay(uint32_t t) {
-  /* t ms -> frames, rounded up: t*60/1000 = t*3/50, split to avoid overflow */
-  uint32_t frames = (t / 50) * 3 + ((t % 50) * 3 + 49) / 50;
+  uint32_t us = get_frame_us();
+  /* t ms -> frames, rounded up: t*1000/us, split to avoid overflow */
+  uint32_t frames = (t / us) * 1000 + ((t % us) * 1000 + us - 1) / us;
   uint32_t target = get_frame_counter() + frames;
   while (get_frame_counter() < target) byield();
 }
 
-/* milliseconds since start, in steps of one frame (16.7 ms) - for MILLIS and @T */
+/* milliseconds since start, in steps of one frame (about 17 ms) - for
+   MILLIS and @T */
 unsigned long millis() {
-  uint32_t f = get_frame_counter();
-  return (unsigned long)((f / 3) * 50 + ((f % 3) * 50) / 3);
+  uint32_t f = get_frame_counter(), us = get_frame_us();
+  /* f*us/1000, split to avoid overflow */
+  return (unsigned long)((f / 1000) * us + ((f % 1000) * us) / 1000);
 }
 #endif
 
