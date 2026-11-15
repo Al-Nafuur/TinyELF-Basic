@@ -9076,7 +9076,7 @@ void xgraphics() {
 }
 
 /* GRAPHICS 8 high-resolution PLOT/DRAWTO pixel mapping, derived empirically
-   on real hardware (see session log). The 18 player columns of a text row
+   on real hardware. The 18 player columns of a text row
    give 144 possible bit positions, but the fine (HMOVE) positioning of
    adjacent players is not pixel-perfect and there is a missile object sat
    between column 0 and column 1. To keep DRAWTO's line slopes geometrically
