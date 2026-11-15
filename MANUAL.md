@@ -149,7 +149,7 @@ The **ESC** key stops a running program from the keyboard **[HW]**.
 #### `CONT`  **[UP]**
 At the prompt: continue after `STOP`. Inside a `FOR` loop: skip the rest of the loop body and go to the next iteration.
 
-#### `DELAY ms`  **[??]**
+#### `DELAY ms`  **[HW]**
 Pauses the program for `ms` milliseconds; the screen keeps running while it waits. The time is rounded up to whole frames of about 17 ms (see `MILLIS`), so `DELAY 1000` waits 60 frames: 1001 ms on an NTSC console, 1010 ms on a PAL console. In a loop this rounding adds up; for a clock, compare with `MILLIS` instead of counting `DELAY`s.
 
 ```
@@ -295,7 +295,7 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 | `BIT(v, n)` | Non-zero if bit `n` of `v` is set. **[UP]** |
 | `SIZE` | Free memory between program and variables. **[UP]** |
 | `HIMEM` | Topmost free memory cell. **[UP]** |
-| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Counts in steps of one frame: 16.69 ms on an NTSC console, 16.84 ms on a PAL console. NTSC or PAL is taken from the TV mode in the cartridge menu (PAL60 counts as PAL). **[??]** |
+| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Counts in steps of one frame: 16.69 ms on an NTSC console, 16.84 ms on a PAL console. NTSC or PAL is taken from the TV mode in the cartridge menu (PAL60 counts as PAL). **[HW]** |
 | `PEEK(a)` | See above. **[HW]** |
 | `STICK(n)`, `STRIG(n)`, `PTRIG(n)` | Controllers, see [chapter 6](#6-controllers-stick-strig-ptrig). **[HW]** |
 
@@ -409,7 +409,7 @@ The `@` character starts variables that give access to system properties:
 | `@C` | Next character of the input stream (0 if none). |
 | `@I`, `@O` | Current input/output stream number. |
 | `@S` | I/O error status. |
-| `@T` | Milliseconds since power-on, like `MILLIS(1)`. **[??]** |
+| `@T` | Milliseconds since power-on, like `MILLIS(1)`. **[HW]** |
 | `@U` | User variable (reserved, no function on TinyELF yet). |
 
 ---
