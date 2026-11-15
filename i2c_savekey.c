@@ -74,9 +74,8 @@ void i2c_start(void) {
    around the same time, made things WORSE on the emulator (neither read
    nor write worked at all afterward, vs. reads at least not corrupting
    data before) - reverted along with the rest back to this last
-   confirmed-working point, rather than trying to isolate exactly which
-   combination broke it while the user is mid-testing. Worth revisiting
-   with real trace data instead of further hand-derivation.
+   confirmed-working point. Worth revisiting with real trace data instead
+   of further hand-derivation.
 
    Every one of these low-level primitives (this, i2c_scl_pulse_sda_released,
    i2c_txack, i2c_start) starts with a vcsJmp3() - a long FORMAT/SAVE

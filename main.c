@@ -8268,11 +8268,11 @@ void xlist() {
   nexttoken();
 
 #ifdef STM32
-  /* LIST "En:file" - detokenized text export to the TinyELF filesystem,
-     see the LIST/ENTER project plan. Only a literal string target is
-     recognized here (token==STRING) rather than trying to disambiguate
-     every possible string expression - a variable/expression target is a
-     documented limitation for this pass; anything else falls through to
+  /* LIST "En:file" - detokenized text export to the TinyELF filesystem.
+     Only a literal string target is recognized here (token==STRING)
+     rather than trying to disambiguate every possible string expression -
+     a variable/expression target is a documented limitation; anything
+     else falls through to
      the existing numeric line-range parsing below, unchanged. */
   if (token == STRING) {
     char filename[SBUFSIZE];
@@ -8350,7 +8350,7 @@ void xlist() {
 /*
  	ENTER "En:file" - reads a text-format program from the TinyELF
  	filesystem, tokenizing each line exactly as if it had been typed - the
- 	reverse of LIST "En:file". See the LIST/ENTER project plan. Mirrors the
+ 	reverse of LIST "En:file". Mirrors the
  	FILESYSTEMDRIVER xload() variant's own text-format loading loop above
  	almost exactly (bi/ibuffer[1..] convention, '#'-comment skip, the same
  	NUMBER-token-triggers-storeline() idiom used by xeval() and the main
@@ -8358,8 +8358,8 @@ void xlist() {
  	instead of ifileopen()/fileavailable()/fileread().
 
  	Deliberately MERGES into whatever program is already in memory (no
- 	implicit NEW first) - matches classic Atari DOS 2.x ENTER semantics
- 	(confirmed with the user): a line number already in memory is
+ 	implicit NEW first) - matches classic Atari DOS 2.x ENTER semantics:
+ 	a line number already in memory is
  	replaced, everything else is untouched. Call NEW first for a clean
  	slate if that's what's wanted.
 */
@@ -9295,8 +9295,8 @@ void xg8drawto() {
    i2c_start() - always the very first real bus op of any window - pulls
    CE low as a side effect, which disables KeyPortari via its own IRQ
    immediately, no settling time needed. Requires current KeyPortari
-   firmware (7-bit protocol with the CE line); testers must be on it,
-   confirmed with the user 2026-09-29 - no fallback for older firmware. */
+   firmware (7-bit protocol with the CE line) - there is no fallback for
+   older firmware. */
 
 /* Meant to be called BETWEEN retry attempts
    of a single write inside a long operation (FORMAT's ~500+ page writes),
@@ -9364,7 +9364,7 @@ void xformat() {
 
   /* 262144 (256KiB) is this filesystem's own hard ceiling - the 10-bit
      next-sector field can't address more sectors than that regardless of
-     which drive is targeted (see the E1-E8 drive-letter project plan) */
+     which drive is targeted */
   if (n < 0 || n > 262144) {
     error(EORANGE);
     return;

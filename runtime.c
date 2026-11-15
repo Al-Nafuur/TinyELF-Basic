@@ -569,7 +569,7 @@ void outch(char c) {
 #endif
 #ifdef STM32
   case OEEPROM:
-    eepromwrite(c); /* LIST "En:file" streaming - see the LIST/ENTER project plan */
+    eepromwrite(c); /* LIST "En:file" streaming, see sdlistopen() */
     break;
 #endif
   default:
@@ -2321,12 +2321,9 @@ char spistrbuf2[SPIRAMSBSIZE];
 #endif
 
 /*
- * TinyELF Basic's I2C-SaveKey-backed storage - being moved out of main.c
- * one function at a time (see project memory: the first attempt moved all
- * FORMAT/SAVE/LOAD/DELETE/CATALOG functions at once and caused
- * a real-hardware boot crash that only showed up after a full revert-and-
- * retest; this time each function gets its own hardware smoke test before
- * the next one moves).
+ * TinyELF Basic's storage commands on the SaveKey-style I2C EEPROM
+ * (FORMAT/SAVE/LOAD/DELETE/CATALOG and the LIST/ENTER streams), declared
+ * in i2c_savekey.h. main.c does the BASIC-level parsing and printing.
  */
 #ifdef STM32
 
@@ -2362,11 +2359,11 @@ static void tinyelf_split_name(const char *name, char *name8, char *ext3) {
 }
 
 /* Parses a MANDATORY leading "En:" (n=1-8, case-insensitive) off name -
-   E1-E8, DOS 2.x style (see the E1-E8 drive-letter project plan). Returns
+   E1-E8, DOS 2.x style. Returns
    1 and fills *drive (0-7) and *rest (pointer just past the ':') on
    success, 0 (missing/malformed prefix) otherwise. There is no default
-   drive - every SAVE/LOAD/DELETE/CATALOG/FORMAT must specify one
-   (confirmed with the user). Pure string parsing, no I2C at all - same
+   drive - every SAVE/LOAD/DELETE/CATALOG/FORMAT must specify one.
+   Pure string parsing, no I2C at all - same
    "hoist out of the disabled-blanking window" placement as
    tinyelf_split_name() above, for the same reason. */
 static uint8_t tinyelf_parse_drive(const char *name, uint8_t *drive, const char **rest) {
@@ -2547,7 +2544,7 @@ uint32_t sdcatalogsize(void) {
   return tinyelf_capacity_bytes();
 }
 
-/* ---- LIST "En:file" streaming - see the LIST/ENTER project plan.
+/* ---- LIST "En:file" streaming.
 
    Characters are collected into a sector-sized chunk and written with ONE
    tinyelf_save_chunk() per full sector (the last, partial one at close).
@@ -2631,11 +2628,10 @@ static void eepromwrite(char c) {
   vcsJmp3(); vcsNop2n(200);
 }
 
-/* ---- ENTER "En:file" streaming - see the LIST/ENTER project plan.
+/* ---- ENTER "En:file" streaming.
    Unlike LIST's sdlistopen()/sdlistclose() (one continuous window held
    open across the whole listlines() call), this REOPENS the window for
-   every single chunk: the caller (main.c's xenter(), not yet written)
-   tokenizes and storeline()s each complete line BETWEEN calls here, with
+   every single chunk: the caller (main.c's xenter()) tokenizes and storeline()s each complete line BETWEEN calls here, with
    overblank back on - storeline() can moveblock() an unbounded amount of
    the whole program buffer to insert one line, so there is no safe fixed
    vcsNop2n() budget for that, unlike LIST's bounded per-character

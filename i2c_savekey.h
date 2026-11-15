@@ -128,8 +128,7 @@ uint8_t sddelete(const char *name);
 uint8_t sdload(const char *name, void *data, uint32_t maxlen, uint32_t *outsize);
 
 /* FORMAT (xformat() in main.c) - drivespec is a mandatory "En:" prefix
-   (E1-E8, see the E1-E8 drive-letter project plan/tinyelf_parse_drive() in
-   runtime.c); sizeOverride is the optional explicit byte count (0 = auto,
+   (E1-E8, see tinyelf_parse_drive() in runtime.c); sizeOverride is the optional explicit byte count (0 = auto,
    from the drive's own I2C address-scan-derived capacity). Returns 0 if
    the drive prefix is missing/malformed, the drive isn't present, the
    size override is invalid, or a retried write was exhausted - main.c
@@ -139,8 +138,8 @@ uint8_t sdformat(const char *drivespec, uint32_t sizeOverride);
 /* CATALOG's scan (xcatalog() in main.c), split into an iterator so main.c
    can keep doing its own printing between entries (outsc()/outnumber()
    don't touch vcsLib, so that's safe to interleave). sdcatalogopen()
-   takes a mandatory "En:" drivespec (see sdformat()'s comment/the E1-E8
-   drive-letter project plan), settles the bus, and mounts that drive -
+   takes a mandatory "En:" drivespec (see sdformat()'s comment), settles
+   the bus, and mounts that drive -
    returns 0 (bus already released, overblank already back on) if the
    drive prefix is missing/malformed or the drive isn't present/formatted,
    so main.c can raise a real error instead of silently showing an empty
@@ -170,8 +169,7 @@ uint32_t sdcatalogfree(uint32_t pos);
    must call sdcatalogopen() first, same as for sdcatalognext()). */
 uint32_t sdcatalogsize(void);
 
-/* LIST "En:file" streaming (xlist() in main.c) - see the LIST/ENTER
-   project plan. name is the full "En:FILE.EXT" string, same convention as
+/* LIST "En:file" streaming (xlist() in main.c). name is the full "En:FILE.EXT" string, same convention as
    sdsave(). The disabled-blanking window stays OPEN between these two
    calls, across the caller's own listlines() call in between -
    sdlistopen() opens it; the caller sets od=OEEPROM, calls

@@ -1,13 +1,9 @@
 /*
  * tinyelf_fs.c
  *
- * See tinyelf_fs.h. Stage 1 of the migration: layout computation, FORMAT,
- * and MOUNT (header read/validate) only - SAVE/LOAD/CATALOG/DELETE follow
- * in later stages, each verified on real hardware before the next is
- * added (see the project plan - this format broke real hardware boot
- * twice during the *previous* refactor for reasons that had nothing to do
- * with logic correctness - a stray libc symbol, and a vcsLib call
- * ordering issue - so this is being done the same careful way).
+ * TinyELF filesystem on SaveKey-style I2C EEPROMs: FORMAT, mount, SAVE,
+ * LOAD, DELETE, the directory iterator and the LIST/ENTER streams. See
+ * tinyelf_fs.h for the on-disk format and the API.
  */
 #include "i2c_savekey.h"
 #include "tinyelf_fs.h"
@@ -15,33 +11,16 @@
 
 #include <string.h> /* memset() only - see tinyelf_fs.h's warning */
 
-/* While outside overblank, the real 6507 must be kept busy essentially
-   continuously - a stretch of plain ARM computation with no vcsLib call
-   at all crashes real hardware. A bare vcsJmp3() does NOT buy any real
-   time for this (confirmed directly by the user, who designed this
-   mechanism) - only vcsNop2n(x) does, by driving the data bus to a NOP
-   opcode for the injected 6502 to chew on, buying x*2 real 6502 cycles of
-   safe ARM time.
+/* While outside overblank, the real 6507 must be fed continuously - a
+   stretch of plain ARM computation with no vcsLib call at all crashes real
+   hardware. A bare vcsJmp3() buys no time; vcsNop2n(x) does, by putting
+   NOPs on the bus for the 6507, which gives the ARM x*2 6507 cycles.
 
-   First attempt here used one big vcsNop2n() precharge before each
-   bounded chunk of ARM-only work (a memset, header field assignments, a
-   VTOC bit-twiddling loop, per-sector byte copies) instead of repeating
-   it through the loop - still crashed real hardware, meaning that
-   single-guess budget was wrong (too small, or the real cost model is
-   different than assumed - genuinely not sure which). Rather than
-   guessing a bigger flat number again, this calls a small, cheap
-   arm_pace() every few loop iterations instead - the max possible gap
-   between real budget purchases is then bounded by a handful of loop
-   iterations' worth of work, not by however large the whole loop turns
-   out to be, so it doesn't matter if the total iteration count is 10 or
-   1000, or if a per-iteration cost estimate is off by some factor - it
-   fails safe by just buying more often rather than needing one correct
-   big guess up front.
-
-   Also resets the injected 6502 PC via vcsJmp3() at the same cadence -
-   vcsNop2n() buys real time but does NOT by itself keep the injected PC
-   within the valid bus-stuffed ROM window over many repetitions; both
-   need to happen together in a long loop, not just the time-buying half. */
+   Long loops call arm_pace() on every iteration: every 8th call buys a
+   fixed amount of time, so the gap between two purchases is bounded by a
+   few iterations of work, however long the loop runs. It also resets the
+   injected PC with vcsJmp3() - vcsNop2n() alone does not keep the PC
+   inside the bus-stuffed ROM window over many repetitions. */
 static void arm_pace(uint16_t i) {
   if ((i & 7u) == 0u) {
     vcsJmp3();
@@ -54,8 +33,7 @@ static void arm_pace(uint16_t i) {
    format supports (max 1024 sectors, guaranteed by compute_layout()'s
    capacity-based sector-size tiering regardless of drive size) - but the
    BYTE ADDRESSES computed from them (sector * sectorSize) can now exceed
-   65536 for a multi-block drive (see the E1-E8 drive-letter project plan),
-   so those are uint32_t at every call site below, translated down to a
+   65536 for a multi-block drive, so those are uint32_t at every call site below, translated down to a
    16-bit within-block address by write_retried()/read_retried(). */
 typedef struct {
   uint16_t sectorSize;
@@ -80,9 +58,8 @@ static tinyelf_layout_t L;
    before every real I2C call. Never needs to split a single call across
    two blocks: every caller passes a sector-aligned address, and every
    sector size this format uses (64/128/256) evenly divides 65536, so a
-   sector never straddles a 64KiB block boundary (confirmed against the
-   SaveKey-Manager sibling project's own implementation, which relies on
-   the same property for the same reason - see the project plan). */
+   sector never straddles a 64KiB block boundary (the SaveKey-Manager
+   relies on the same property). */
 static uint8_t write_retried(uint32_t addr, const void *buf, uint16_t len) {
   uint8_t tries, ok = 0;
   uint8_t devaddr7 = (uint8_t)(L.baseAddr7 + (addr >> 16));
@@ -106,9 +83,7 @@ static uint8_t read_retried(uint32_t addr, void *buf, uint16_t len) {
 
 /* ---- drive scan/resolution: E1-E8 = 0x50-0x57, contiguous ACKing
    addresses collapse into one logical drive labelled by the lowest
-   address in the run - see the project plan for the full rationale
-   (matches the SaveKey-Manager sibling project's own model, confirmed
-   directly via its Claude session). ---- */
+   address in the run - the same model as the SaveKey-Manager. ---- */
 #define TINYELF_NUM_DRIVES 8u
 
 typedef struct {
@@ -233,8 +208,8 @@ uint8_t tinyelf_format(uint8_t drive, uint32_t capacityOverride) {
 
   /* Capacity: auto (addressCount * 65536) for a multi-block drive, or a
      32768 (24LC256) default for a single-block drive
-     (genuinely capacity-ambiguous from the scan alone - confirmed via the
-     SaveKey-Manager sibling project, see the project plan) when no
+     (capacity-ambiguous from the scan alone; the SaveKey-Manager assumes
+     the same) when no
      explicit override is given; an explicit override is only bounds-
      checked against a multi-block drive's known capacity, since a
      single-block drive's real size isn't knowable here at all. */
@@ -333,10 +308,8 @@ uint8_t tinyelf_mount(uint8_t drive) {
      without this a failed mount (e.g. the disk has an older, pre-TinyELF
      format's header, or isn't formatted at all)
      could leave L.mounted stuck at 1 from an earlier successful
-     mount/format this session, and every other tinyelf_* call would then
-     silently keep using that stale layout instead of correctly failing -
-     found via CATALOG appearing to show old-format files after a FORMAT
-     that didn't actually complete. */
+     mount/format, and every other tinyelf_* call would then silently keep
+     using that stale layout instead of correctly failing. */
   L.mounted = 0;
 
   /* Real I2C (a scan), but no large ARM-only work follows it before the
@@ -382,13 +355,11 @@ uint8_t tinyelf_mount(uint8_t drive) {
 
 /* "Present" (a real, visible entry) is NOT "exactly equals TDIR_FLAG_INUSE"
    - other real, meaningful bits can ride along (LOCKED 0x20, OPENED_FOR_
-   OUTPUT 0x01, and the SaveKey-Manager sibling project's own
-   CREATED_BY_DOS2 0x02, which it unconditionally ORs into every upload's
-   flags byte - confirmed directly via its Claude session, after a real
-   interop bug: our exact-match check silently hid every file uploaded via
-   that tool from CATALOG/LOAD/SAVE-overwrite). Matches that project's own
-   parseDirectoryEntry() convention exactly: present = not (never-used or
-   deleted), not a positive match against one specific "in-use" byte. */
+   OUTPUT 0x01, and CREATED_BY_DOS2 0x02, which the SaveKey-Manager sets
+   on every upload - an exact-match check would hide those files from
+   CATALOG/LOAD/SAVE-overwrite). Same convention as the SaveKey-Manager's
+   parseDirectoryEntry(): present = not (never-used or deleted), not a
+   positive match against one specific "in-use" byte. */
 static uint8_t tdir_entry_present(uint8_t flags) {
   return (uint8_t)(flags != TDIR_FLAG_NEVERUSED && !(flags & TDIR_FLAG_DELETED));
 }
@@ -732,18 +703,12 @@ uint32_t tinyelf_capacity_bytes(void) {
   return (uint32_t)L.totalSectors * (uint32_t)L.sectorSize;
 }
 
-/* ---- streaming SAVE - see tinyelf_fs.h's comment for the public contract
-   and the LIST/ENTER project plan for why this exists (a detokenized
-   listing's total length isn't known upfront, and there's no second RAM
-   buffer big enough to capture it all before saving). Module-static state,
-   same pattern as L - only one stream can be open at a time, matching how
-   only one drive can be mounted at a time already.
-
-   NOTE (2026-09-12): re-added after a full revert following an unexplained
-   boot crash when tinyelf_save_chunk()+tinyelf_save_end() were both wired
-   into a caller (even an unreached one) - see project memory. Being
-   re-introduced incrementally this time, one function at a time, with a
-   real hardware boot test after each. ---- */
+/* ---- streaming SAVE - see tinyelf_fs.h's comment for the public contract.
+   It exists because a detokenized listing's total length isn't known
+   upfront, and there's no second RAM buffer big enough to capture it all
+   before saving. Module-static state, same pattern as L - only one stream
+   can be open at a time, matching how only one drive can be mounted at a
+   time already. ---- */
 static struct {
   uint8_t  active;
   uint8_t  vtocBuf[TINYELF_MAX_SECTOR];
