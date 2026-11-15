@@ -7,3 +7,11 @@
 /bak/
 /docs/
 *.bin
+
+# local working files and third-party reference material, not published
+/36 Char (20210226_B)/
+/36 Char (20210226_B).zip
+/TinyELF-Basic-Manual.pdf
+/ttl/
+/example_i2c_Savekey.asm
+/i2c_v2.3.inc
