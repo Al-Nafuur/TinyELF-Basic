@@ -291,11 +291,11 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 | `SQR(x)` | Integer square root. **[UP]** |
 | `POW(a, b)` | a to the power b (0 for a negative exponent). **[UP]** |
 | `MAP(v, a, b, c, d)` | Maps `v` from range a…b to range c…d, like Arduino `map`. **[UP]** |
-| `LEN(s$)` | Length of a string. The argument can also be a string function: `LEN(MID$(A$,2))`. **[??]** |
+| `LEN(s$)` | Length of a string. The argument can also be a string function: `LEN(MID$(A$,2))`. **[HW]** |
 | `BIT(v, n)` | Non-zero if bit `n` of `v` is set. **[UP]** |
 | `SIZE` | Free memory between program and variables. **[UP]** |
 | `HIMEM` | Topmost free memory cell. **[UP]** |
-| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Measured with the cartridge timer, so it also counts SaveKey commands and frames made longer by a larger time budget ([section 7.1](#71-interpreter-values-in-the-riot-mirror-ram)). The TV mode in the cartridge menu has to match the console (PAL60 counts as PAL), the frames are timed by it. In Gopher2600 `MILLIS` counts in steps of one frame: 16.69 ms with NTSC, 16.84 ms with PAL. **[??]** |
+| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Measured with the cartridge timer, so it also counts SaveKey commands and frames made longer by a larger time budget ([section 7.1](#71-interpreter-values-in-the-riot-mirror-ram)). The TV mode in the cartridge menu has to match the console (PAL60 counts as PAL), the frames are timed by it. In Gopher2600 `MILLIS` counts in steps of one frame: 16.69 ms with NTSC, 16.84 ms with PAL. **[HW]** |
 | `PEEK(a)` | See above. **[HW]** |
 | `STICK(n)`, `STRIG(n)`, `PTRIG(n)` | Controllers, see [chapter 6](#6-controllers-stick-strig-ptrig). **[HW]** |
 
