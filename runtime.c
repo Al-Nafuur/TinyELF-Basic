@@ -1230,25 +1230,36 @@ void bdelay(uint32_t t) {
   }
 }
 #else
-/* No clock on this target: time comes from the real frame counter and the
+/* No real-time clock on this target. On a PlusCart/UnoCart the cartridge
+   timer measures the time (cart_millis() in main.c: normal frames count
+   exactly, longer frames and SaveKey commands as measured). Without it
+   (Gopher2600, a Cortex-M0+) time comes from the frame counter and the
    length of one frame, get_frame_us() - 16688 us on NTSC consoles, 16842 us
    on PAL consoles (see frame_us in main.c). byield() itself fires per
    statement/character, not per frame, so counting byield() calls has no
-   fixed relationship to elapsed time - only get_frame_counter() does.
-   Waiting through byield() keeps rendering frames, so the picture stays
-   stable during DELAY. */
+   fixed relationship to elapsed time. Waiting through byield() keeps
+   rendering frames, so the picture stays stable during DELAY. */
 void bdelay(uint32_t t) {
-  uint32_t us = get_frame_us();
-  /* t ms -> frames, rounded up: t*1000/us, split to avoid overflow */
-  uint32_t frames = (t / us) * 1000 + ((t % us) * 1000 + us - 1) / us;
-  uint32_t target = get_frame_counter() + frames;
-  while (get_frame_counter() < target) byield();
+  if (has_cart_timer()) {
+    /* at least t ms; BASIC only runs between frames, so up to one frame more */
+    uint32_t start = cart_millis();
+    while (cart_millis() - start < t) byield();
+  } else {
+    uint32_t us = get_frame_us();
+    /* t ms -> frames, rounded up: t*1000/us, split to avoid overflow */
+    uint32_t frames = (t / us) * 1000 + ((t % us) * 1000 + us - 1) / us;
+    uint32_t target = get_frame_counter() + frames;
+    while (get_frame_counter() < target) byield();
+  }
 }
 
-/* milliseconds since start, in steps of one frame (about 17 ms) - for
-   MILLIS and @T */
+/* milliseconds since start - for MILLIS and @T. Without the cartridge
+   timer in steps of one frame (about 17 ms). */
 unsigned long millis() {
-  uint32_t f = get_frame_counter(), us = get_frame_us();
+  uint32_t f, us;
+  if (has_cart_timer()) return cart_millis();
+  f = get_frame_counter();
+  us = get_frame_us();
   /* f*us/1000, split to avoid overflow */
   return (unsigned long)((f / 1000) * us + ((f % 1000) * us) / 1000);
 }

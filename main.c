@@ -344,15 +344,15 @@ uint32_t get_frame_us(void) { return frame_us; }
    PAL); if the ARM is not back by then, the 6507 waits in WaitForCart and
    the frame gets longer than 262 lines - the picture jumps. BASIC
    therefore runs for timeBudget microseconds after the overblank started,
-   then the next frame is rendered. Measured with the Cortex-M4 cycle
-   counter, which the UCA firmware uses too. Both POKE/PEEK-able:
-   timeBudget 16 bit at TIMEBUDGET_ADDR/+1 (LSB first), overrunCount 8 bit
-   = frames in which the ARM came back after the overblank had ended
-   (saturates at 255, POKE 0 to reset).
-   Without a cycle counter (Gopher2600 does not emulate it, a Cortex-M0+
-   has none) timeBudget stays 0 and the old token count decides instead:
-   tokenBudget statements, or tokenBudget * TOKEN_WORK_FACTOR tokens read,
-   per frame - set from the clock in setup(), not changeable. */
+   then the next frame is rendered. Measured with the cartridge timer (see
+   cart_timer_start()). Both POKE/PEEK-able: timeBudget 16 bit at
+   TIMEBUDGET_ADDR/+1 (LSB first), overrunCount 8 bit = frames in which
+   the ARM came back after the overblank had ended (saturates at 255,
+   POKE 0 to reset).
+   Without the timer (Gopher2600, a Cortex-M0+) timeBudget stays 0 and the
+   old token count decides instead: tokenBudget statements, or
+   tokenBudget * TOKEN_WORK_FACTOR tokens read, per frame - set from the
+   clock in setup(), not changeable. */
 static uint16_t tokenBudget = 10;
 #define OVERRUN_ADDR     0x28F
 #define overrunCount     (riotShadowRAM[OVERRUN_ADDR & 0x1F])
@@ -360,12 +360,28 @@ static uint16_t tokenBudget = 10;
 #define timeBudget (*(uint16_t*)&riotShadowRAM[TIMEBUDGET_ADDR & 0x1F])
 #define TIMEBUDGET_RESERVE_US 500  /* time left for the last statement of a frame */
 
-#define DEMCR_REG    (*(volatile uint32_t*)0xE000EDFCu)
-#define DWT_CTRL_REG (*(volatile uint32_t*)0xE0001000u)
-#define DWT_CYCCNT   (*(volatile uint32_t*)0xE0001004u)
-static uint32_t cyclesPerUs = 0;      /* 0 = no cycle counter, token budget only */
-static uint32_t overblankCycles = 0;  /* length of the overblank in CPU cycles */
-static uint32_t frameStart = 0;       /* DWT_CYCCNT when the overblank started */
+/* The cartridge timer: TIM2 of the STM32F4, a 32 bit counter prescaled to
+   about 1 MHz, so it wraps only after 71 minutes and also measures long
+   SaveKey commands. The UCA firmware uses no timer. Its clock comes from
+   the cartridge's internal RC oscillator (HSI, +-1 % or worse), so the
+   tick length is calibrated against the console: a frame in which the
+   ARM was back before the end of the overblank lasts exactly frame_us.
+   Gopher2600 has TIM2, but it counts ARM cycles there, not time; it uses
+   the frame counter instead, like a cartridge without the timer. */
+#define CPUID_REG       (*(volatile uint32_t*)0xE000ED00u)
+#define RCC_CFGR_REG    (*(volatile uint32_t*)0x40023808u)
+#define RCC_APB1ENR_REG (*(volatile uint32_t*)0x40023840u)
+#define TIM2_CR1_REG    (*(volatile uint32_t*)0x40000000u)
+#define TIM2_EGR_REG    (*(volatile uint32_t*)0x40000014u)
+#define TIM2_CNT_REG    (*(volatile uint32_t*)0x40000024u)
+#define TIM2_PSC_REG    (*(volatile uint32_t*)0x40000028u)
+#define TIM2_ARR_REG    (*(volatile uint32_t*)0x4000002Cu)
+static bool hasTimer = false;
+static uint32_t nomTicks16 = 0;     /* timer ticks per normal frame, * 16 */
+static uint32_t frameStart = 0;     /* timer when the current overblank started */
+static uint32_t budgetTicks = 0;    /* timeBudget in timer ticks */
+static uint32_t overblankTicks = 0; /* length of the overblank in timer ticks */
+static uint32_t timeMs = 0, timeUs = 0; /* time at frameStart, us part < 1000 */
 
 /* height (in text rows) of the scrollable text window at the bottom of
    the screen when a windowed GRAPHICS mode (3/8) is active - 0 means no
@@ -2033,6 +2049,83 @@ void bmillis() {
 static bool in_gopher(void) {
   return (((uint32_t)&elf_main) & 0xF0000000u) == 0x10000000u;
 }
+
+/* the per-frame values derived from the calibrated tick length */
+static void cart_timer_limits(void) {
+  uint32_t nom = nomTicks16 >> 4;
+  budgetTicks = (uint32_t)timeBudget * nom / frame_us;
+  overblankTicks = nom * 60 / 262;
+}
+
+/* timer ticks -> microseconds of console time, t*frame_us/nom split so
+   that it neither overflows nor needs a 64 bit division */
+static uint32_t ticks_to_us(uint32_t t) {
+  uint32_t nom = nomTicks16 >> 4;
+  return (t / nom) * frame_us + (t % nom) * frame_us / nom;
+}
+
+/* starts TIM2 at about 1 MHz (see hasTimer); clk = HCLK in Hz. Only on a
+   Cortex-M4, i.e. the STM32F4 of a PlusCart/UnoCart, not in Gopher2600. */
+static void cart_timer_start(uint32_t clk) {
+  uint32_t ppre1, div, timclk, c;
+  volatile uint16_t i;
+
+  if (in_gopher() || ((CPUID_REG >> 4) & 0xFFFu) != 0xC24u) return;
+  /* APB1 timer clock: HCLK / APB1 prescaler, times 2 if that is not 1 */
+  ppre1 = (RCC_CFGR_REG >> 10) & 7u;
+  div = (ppre1 & 4u) ? (2u << (ppre1 & 3u)) : 1u;
+  timclk = div > 1 ? clk / div * 2 : clk;
+  if (timclk < 1000000UL) return;
+
+  RCC_APB1ENR_REG |= 1u;            /* TIM2EN */
+  (void)RCC_APB1ENR_REG;
+  TIM2_CR1_REG = 0;
+  TIM2_PSC_REG = timclk / 1000000UL - 1;
+  TIM2_ARR_REG = 0xFFFFFFFFu;
+  TIM2_EGR_REG = 1;                 /* UG: load the prescaler now */
+  TIM2_CR1_REG = 1;                 /* CEN */
+  c = TIM2_CNT_REG;
+  for (i = 0; i < 2000; i++) ;
+  if (TIM2_CNT_REG == c) return;
+
+  hasTimer = true;
+  nomTicks16 = frame_us * 16;       /* 1 tick = 1 us until calibrated */
+  frameStart = TIM2_CNT_REG;
+  cart_timer_limits();
+}
+
+/* called by bloop() right after vcsStartOverblank(): adds the frame that
+   just ended to the time. A normal frame (262 lines) adds exactly
+   frame_us; a longer one - a larger time budget, an overrun, a SaveKey
+   command without frames - adds its measured length. early = the ARM was
+   back before the end of that frame's overblank, so the frame had 262
+   lines and calibrates the tick length (smoothed over 16 frames). */
+static void cart_timer_frame(bool early) {
+  uint32_t now = TIM2_CNT_REG, d = now - frameStart, nom = nomTicks16 >> 4, us;
+
+  frameStart = now;
+  if (early && d < nom + (nom >> 4) && d + (nom >> 4) > nom)
+    nomTicks16 += d - nom;
+  us = d <= nom + (nom >> 6) ? frame_us : ticks_to_us(d);
+  timeMs += us / 1000;
+  timeUs += us % 1000;
+  if (timeUs >= 1000) { timeMs++; timeUs -= 1000; }
+  cart_timer_limits();
+}
+
+/* milliseconds since start; 0 if there is no cartridge timer */
+uint32_t cart_millis(void) {
+  uint32_t o, nom = nomTicks16 >> 4, us;
+
+  if (!hasTimer) return 0;
+  o = TIM2_CNT_REG - frameStart;
+  us = ticks_to_us(o);
+  /* inside a normal frame: never reach the frame_us its end adds */
+  if (o <= nom + (nom >> 6) && us >= frame_us) us = frame_us - 1;
+  return timeMs + (timeUs + us) / 1000;
+}
+
+int has_cart_timer(void) { return hasTimer; }
 #endif
 
 #if (!defined(MEMSIZE) || MEMSIZE == 0) && defined(STM32)
@@ -12990,7 +13083,7 @@ void setup() {
   if (!autorun()) displaybanner();
 
   /* frame cadence, see timeBudget. The token budget for systems without
-     a cycle counter comes from the clock in mainArgs[MP_CLOCK_HZ] -
+     the cartridge timer comes from the clock in mainArgs[MP_CLOCK_HZ] -
      divisor tuned empirically on real hardware before the time budget
      existed (stable up to ~356 tokens at 216MHz; 650000 gives ~332). */
   {
@@ -12998,21 +13091,12 @@ void setup() {
     tokenBudget = clk / 650000UL;
     if (tokenBudget < 1) tokenBudget = 10;
 
-    /* time-based cadence where the cycle counter exists: the overblank
+    /* time-based cadence where the cartridge timer exists: the overblank
        is 60 of the frame's 262 lines */
-    if (!in_gopher() && clk >= 1000000UL) {
-      uint32_t c;
-      volatile uint8_t i;
-      DEMCR_REG |= (1UL << 24);        /* TRCENA: enable the DWT unit */
-      DWT_CTRL_REG |= 1UL;             /* CYCCNTENA */
-      c = DWT_CYCCNT;
-      for (i = 0; i < 10; i++) ;
-      if (DWT_CYCCNT != c) {
-        uint32_t overblank_us = frame_us * 60 / 262;
-        cyclesPerUs = clk / 1000000UL;
-        overblankCycles = overblank_us * cyclesPerUs;
-        timeBudget = overblank_us - TIMEBUDGET_RESERVE_US;
-      }
+    cart_timer_start(clk);
+    if (hasTimer) {
+      timeBudget = frame_us * 60 / 262 - TIMEBUDGET_RESERVE_US;
+      cart_timer_limits();
     }
   }
 
@@ -13245,9 +13329,9 @@ void bloop() {
   if (od == OEEPROM || i2cWindowOpen)
     return;
 
-  if (cyclesPerUs) {
+  if (hasTimer) {
     /* time-based: BASIC may run until timeBudget us of the overblank are used */
-    if (DWT_CYCCNT - frameStart < (uint32_t)timeBudget * cyclesPerUs)
+    if (TIM2_CNT_REG - frameStart < budgetTicks)
       return;
   } else if (tokenCounter && workCounter) {
     tokenCounter--;
@@ -13255,11 +13339,17 @@ void bloop() {
   }
 
   cursor_update();
-  /* the 6507 had to wait for us: this frame is longer than 262 lines (the
-     first frame after power-on is not counted, setup() ran before it) */
-  if (cyclesPerUs && frameCounter && overrunCount < 255 &&
-      DWT_CYCCNT - frameStart > overblankCycles)
-    overrunCount++;
+  bool early = false;
+  if (hasTimer) {
+    uint32_t spent = TIM2_CNT_REG - frameStart;
+    /* back well before the end of the overblank: this frame has exactly
+       262 lines and calibrates the timer (see cart_timer_frame()) */
+    early = spent + (overblankTicks >> 4) < overblankTicks;
+    /* the 6507 had to wait for us: this frame is longer than 262 lines
+       (the first frame after power-on is not counted, setup() ran before) */
+    if (spent > overblankTicks && frameCounter && overrunCount < 255)
+      overrunCount++;
+  }
   vcsEndOverblank();
 
   renderDisplayFrame();
@@ -13298,7 +13388,7 @@ void bloop() {
   vcsSta3(AUDV1);
 
   vcsStartOverblank();
-  if (cyclesPerUs) frameStart = DWT_CYCCNT;
+  if (hasTimer) cart_timer_frame(early);
   tiaShadowRAM[EVEN_FRAME] = tiaShadowRAM[EVEN_FRAME] ? 0:1;
 
   // KeyPortari's ASCII protocol only drives D0-D6, D7 floats/reads high, so

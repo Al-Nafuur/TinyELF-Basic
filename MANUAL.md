@@ -150,7 +150,7 @@ The **ESC** key stops a running program from the keyboard **[HW]**.
 At the prompt: continue after `STOP`. Inside a `FOR` loop: skip the rest of the loop body and go to the next iteration.
 
 #### `DELAY ms`  **[HW]**
-Pauses the program for `ms` milliseconds; the screen keeps running while it waits. The time is rounded up to whole frames of about 17 ms (see `MILLIS`), so `DELAY 1000` waits 60 frames: 1001 ms on an NTSC console, 1010 ms on a PAL console. In a loop this rounding adds up; for a clock, compare with `MILLIS` instead of counting `DELAY`s.
+Pauses the program for at least `ms` milliseconds; the screen keeps running while it waits. The interpreter only runs between two frames, so the pause can end up to one frame (about 17 ms) later; in Gopher2600 it is rounded up to whole frames. In a loop this extra time adds up; for a clock, compare with `MILLIS` instead of counting `DELAY`s.
 
 ```
 10 PRINT "Wait...": DELAY 2000: PRINT "Go!"
@@ -295,7 +295,7 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 | `BIT(v, n)` | Non-zero if bit `n` of `v` is set. **[UP]** |
 | `SIZE` | Free memory between program and variables. **[UP]** |
 | `HIMEM` | Topmost free memory cell. **[UP]** |
-| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Counts in steps of one frame: 16.69 ms on an NTSC console, 16.84 ms on a PAL console. NTSC or PAL is taken from the TV mode in the cartridge menu (PAL60 counts as PAL). **[HW]** |
+| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Measured with the cartridge timer, so it also counts SaveKey commands and frames made longer by a larger time budget ([section 7.1](#71-interpreter-values-in-the-riot-mirror-ram)). The TV mode in the cartridge menu has to match the console (PAL60 counts as PAL), the frames are timed by it. In Gopher2600 `MILLIS` counts in steps of one frame: 16.69 ms with NTSC, 16.84 ms with PAL. **[??]** |
 | `PEEK(a)` | See above. **[HW]** |
 | `STICK(n)`, `STRIG(n)`, `PTRIG(n)` | Controllers, see [chapter 6](#6-controllers-stick-strig-ptrig). **[HW]** |
 
@@ -528,7 +528,7 @@ The interpreter runs while the 6507 draws the lower and upper border of the pict
 
 If the interpreter needs longer than the overblank, the frame gets longer and the picture jumps. The **overrun counter** counts these frames, up to 255; `POKE 655,0` sets it back to 0. A SaveKey command counts one frame too.
 
-A time budget above the overblank makes a long computation faster, up to about four times at 65535 µs, but every frame gets longer: the picture jumps or rolls, and `MILLIS`, `@T` and `DELAY`, which count frames, run slow. Raise it only for the computation and set it back afterwards:
+A time budget above the overblank makes a long computation faster, up to about four times at 65535 µs, but every frame gets longer: the picture jumps or rolls. `MILLIS`, `@T` and `DELAY` stay right, they use the cartridge timer. Raise it only for the computation and set it back afterwards:
 
 ```
 100 B0=PEEK(656): B1=PEEK(657): POKE 656,255: POKE 657,255
@@ -536,7 +536,7 @@ A time budget above the overblank makes a long computation faster, up to about f
 190 POKE 656,B0: POKE 657,B1
 ```
 
-Gopher2600 has no time measurement: there the time budget reads 0, and a frame is drawn after a fixed number of statements.
+Gopher2600 has no cartridge timer: there the time budget reads 0, a frame is drawn after a fixed number of statements, and `MILLIS` counts frames.
 
 ### 7.2 Sound  **[HW]**
 
@@ -850,7 +850,7 @@ For readers who know Stefan's original `MANUAL.md`: the following parts **do not
 the E1–E8 filesystem, the hardware memory map for `PEEK`/`POKE`.
 
 **Different in TinyELF Basic:** long variable names follow the Microsoft rule, only the first two characters are significant
-([section 4.1](#41-variables)). `MILLIS` and `DELAY` count in frames of about 17 ms. ESC instead of `#` stops a program.
+([section 4.1](#41-variables)). `MILLIS` and `DELAY` use the cartridge timer (in Gopher2600 frames of about 17 ms). ESC instead of `#` stops a program.
 `SET 25` (Microsoft style numbers) and the string comparisons with `<`, `>`, `<=`, `>=` are TinyELF additions.
 
 ---

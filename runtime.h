@@ -318,6 +318,8 @@ void fastticker();
 void yieldfunction();
 uint32_t get_frame_counter(void);
 uint32_t get_frame_us(void); /* length of one frame in microseconds */
+int has_cart_timer(void);    /* PlusCart/UnoCart timer running, see main.c */
+uint32_t cart_millis(void);  /* milliseconds from the cartridge timer */
 #ifdef STM32
 unsigned long millis(void); /* frame counter based, see runtime.c */
 #endif
