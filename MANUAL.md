@@ -131,7 +131,7 @@ Other basics:
   work as bitwise operators (`NOT 0` is `-1`).
 * `%` is the integer modulus.
 
-### Numbers  **[??]**
+### Numbers  **[HW]**
 
 * Numbers are single precision floating point (32 bit) with about 7 significant digits, from about 1.2E-38 to 3.4E38. Whole numbers are exact up to 16777216; above that they are rounded.
 * `/` divides exactly: `7/2` is 3.5. `INT` cuts off the fraction downwards: `INT(3.7)` is 3, `INT(-2.5)` is -3.
