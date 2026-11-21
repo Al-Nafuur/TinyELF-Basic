@@ -1730,6 +1730,12 @@ char serialread() {
       continue;
     }
 #endif
+#ifdef STM32
+    /* the line ends with RETURN (13); the other control codes of the KeyPortari
+       (cursor keys 4, 10, 11, 21, TAB, function keys) are not part of a line -
+       GET still sees them */
+    if (ch != '\r' && ch != 8 && (unsigned char)ch < 32) continue;
+#endif
     put_char(ch);
     if (ch == 8 || ch == 127) {
       if (linelen > 0) linelen--;

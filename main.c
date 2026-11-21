@@ -1208,7 +1208,7 @@ uint32_t tokenCounter = 0;
    statement, so ordinary code still renders at the old cadence. */
 #define TOKEN_WORK_FACTOR 4
 uint32_t workCounter = 0;
-bool key_restrainer = false;
+uint8_t last_key = 0x7F; /* KeyPortari value of the previous frame, 0x7F = no key */
 
 static uint32_t* g_mainArgs = 0;
 
@@ -1690,7 +1690,7 @@ const bworkfunction_t workfunctions[] PROGMEM = {
 /* errors and messages */
 const char mfile[]    	PROGMEM = "file.bas";
 const char mprompt[]	PROGMEM = "";
-const char mgreet[]		PROGMEM = "TinyELF Basic v0.21 "; /* + free bytes, see displaybanner() */
+const char mgreet[]		PROGMEM = "TinyELF Basic v0.22 "; /* + free bytes, see displaybanner() */
 const char mline[]		PROGMEM = "LINE";
 const char mnumber[]	PROGMEM = "NUMBER";
 const char mvariable[]	PROGMEM = "VARIABLE";
@@ -13376,12 +13376,12 @@ void bloop() {
   // mask it off instead of using the raw byte as the idle/pressed sentinel.
   uint8_t swcha_ascii = riotShadowRAM[SWCHA & 0x1F] & 0b01111111;
 
-  if(swcha_ascii != 0b01111111 && !key_restrainer){ // Key pressed
-    active_char = (char)swcha_ascii;
-    key_restrainer = true;
-  }else if(swcha_ascii == 0b01111111 ){
-    key_restrainer = false;
-  }
+  /* A key counts when the value changes to a key code. Typing fast, the
+     next key is often pressed before the last one is released (rollover):
+     the KeyPortari then switches from one code straight to the next, without
+     0x7F in between. The same key twice still needs a release in between. */
+  if (swcha_ascii != 0b01111111 && swcha_ascii != last_key) active_char = (char)swcha_ascii;
+  last_key = swcha_ascii;
 
 #ifdef TINYELF_TEST_SCRIPT
   /* Emulator test hook (headless Gopher2600, no keyboard): types the

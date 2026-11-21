@@ -1,6 +1,6 @@
 # TinyELF Basic – User Manual
 
-**TinyELF Basic v0.21**
+**TinyELF Basic v0.22**
 
 TinyELF Basic is a BASIC interpreter that runs entirely on the microcontroller of a modern Atari 2600
 flash cartridge (PlusCart, UnoCart) as an ELF program. It drives a 36-character text kernel and adds
@@ -46,8 +46,9 @@ and extended with everything that is specific to the Atari 2600 port.
 * An Atari 2600 (or compatible) with a **PlusCart** or **UnoCart** running **UCA firmware v2.3.32** or newer.
   TinyELF Basic uses the new vcsLib interface of the firmware and does not start on v2.3.28 or older.
   Chameleon Cart is untested.
-* A **KeyPortari** keyboard adapter in both joystick ports with the **latest KeyPortari firmware**. TinyELF Basic uses its
+* A **KeyPortari** keyboard adapter in both joystick ports with **KeyPortari firmware v1.2.0** or newer (update it with the KeyPortari Updater). TinyELF Basic uses its
   direct ASCII protocol (7 data bits over the joystick port) and its chip-enable line (bit 7). There is no other input method yet.
+  With older firmware BACKSPACE does not work and the SaveKey cannot be used.
 * For storage (optional): an I2C EEPROM device in **SaveKey** style, connected through the KeyPortari right joystick port
   (see [chapter 8](#8-storage-drives-the-tinyelf-filesystem-list-and-enter)). It shares the port lines with the KeyPortari.
   Before every storage access TinyELF Basic pulls the KeyPortari's chip-enable line low, which takes the KeyPortari off
@@ -67,7 +68,7 @@ The display is a 36-column text kernel (ported from Omegamatrix's 36-character k
 At start-up TinyELF Basic prints its banner, e.g.
 
 ```
-TinyELF Basic v0.21 65535 Bytes Free
+TinyELF Basic v0.22 65535 Bytes Free
 ```
 
 On a PlusCart or UnoCart 65535 bytes of RAM are available for the program and its variables. `SIZE` shows the remaining free memory.
@@ -87,6 +88,7 @@ RUN
 * There is no full-screen editor; retype a line to change it.
 * Statements on one line are separated with `:`.
 * **ESC** stops a running program, also while it waits in `INPUT` **[HW]**. At the prompt ESC throws away the line typed so far.
+* **BACKSPACE** deletes the last character. Cursor keys, TAB and the function keys are ignored while you type a line; `GET` still returns their codes. **[??]**
 
 ### 1.5 Emulators
 
@@ -248,6 +250,8 @@ is pressed. To wait for a key, loop:
 ```
 10 GET K: IF K=0 THEN GOTO 10
 ```
+
+Special keys give: RETURN 13, BACKSPACE 8, ESC 27, TAB 9, cursor up 11, down 10, left 4, right 21, HOME 2, END 3, PAGE UP 25, PAGE DOWN 26, F1–F6 14–19, F10 20, F11 22 (F7–F9 and F12 give nothing). **[??]**
 
 `PUT 65` writes the character with that code.
 
