@@ -38,6 +38,14 @@ https://github.com/Al-Nafuur/United-Carts-of-Atari
   and UnoCart, licensed under the GNU General Public License version 3.
 
 
+Cephes Mathematical Library by Stephen L. Moshier
+https://www.netlib.org/cephes/
+
+  The polynomial coefficients of SIN, COS, TAN, ATAN, LOG and EXP in
+  tinymath.c are taken from the single precision functions of Cephes
+  (sinf, expf, logf, atanf), which "may be used freely".
+
+
 Example programs (examples/)
 
   The listings keep their own licences:
