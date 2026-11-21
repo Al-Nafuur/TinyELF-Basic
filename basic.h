@@ -315,7 +315,7 @@ typedef double number_t;
 typedef long long wnumber_t;
 #else
 typedef float number_t;
-typedef long long wnumber_t;
+typedef int32_t wnumber_t; /* TinyELF: only integers below maxnum (2^24) are written with it */
 #endif
 #else
 #ifdef HAS64BIT

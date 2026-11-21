@@ -103,7 +103,7 @@ important things on real hardware.
 
 ## 2. The language at a glance
 
-TinyELF Basic is an **integer-only BASIC**: numbers are 32-bit signed integers, there is no floating point.
+TinyELF Basic computes with **floating point numbers** (see [Numbers](#numbers) below).
 Based on Stefan's *language sets*, TinyELF Basic is built with:
 
 | Language set | In TinyELF Basic? |
@@ -118,8 +118,9 @@ Based on Stefan's *language sets*, TinyELF Basic is built with:
 | MS-style strings (`LEFT$`, `RIGHT$`, `MID$`, `ASC`, `CHR$`, `SPC`, `STR$`, `VAL`, `INSTR`, `+` for strings) and the power operator `^` | Yes |
 | MS-style variable names (up to 32 characters, the first two are significant) | Yes – see [section 4.1](#41-variables) |
 | Timer (`MILLIS`, `DELAY`) | Yes |
+| Floating point (`SIN`, `COS`, `TAN`, `ATAN`, `LOG`, `EXP`, `INT`) | Yes |
 | **TinyELF / Atari additions** (`GRAPHICS`, `PLOT`, `DRAWTO`, `STICK`, `STRIG`, `PTRIG`, `FORMAT`, `CATALOG`, `ENTER`, `DELETE`) | Yes – see chapters 5–8 |
-| Float, Darkarts, IoT (`SENSOR`, `WIRE`, …), timers/events, structured (`WHILE`, `SWITCH`, `DO`), file I/O (`OPEN`, `CLOSE`, `FDISK`), Arduino pin I/O, `HELP`, `EDIT`, `USR`, `CALL` | **No** – see [Appendix A](#appendix-a--differences-to-stefans-manual) |
+| Darkarts, IoT (`SENSOR`, `WIRE`, …), timers/events, structured (`WHILE`, `SWITCH`, `DO`), file I/O (`OPEN`, `CLOSE`, `FDISK`), Arduino pin I/O, `HELP`, `EDIT`, `USR`, `CALL` | **No** – see [Appendix A](#appendix-a--differences-to-stefans-manual) |
 
 Other basics:
 
@@ -129,6 +130,17 @@ Other basics:
   Comparisons bind weakest and yield **-1 for true and 0 for false**, so `NOT`, `AND` and `OR`
   work as bitwise operators (`NOT 0` is `-1`).
 * `%` is the integer modulus.
+
+### Numbers  **[??]**
+
+* Numbers are single precision floating point (32 bit) with about 7 significant digits, from about 1.2E-38 to 3.4E38. Whole numbers are exact up to 16777216; above that they are rounded.
+* `/` divides exactly: `7/2` is 3.5. `INT` cuts off the fraction downwards: `INT(3.7)` is 3, `INT(-2.5)` is -3.
+* `RND(n)` gives a random number from 0 up to, but not including, `n`, with a fraction: dice are `INT(RND(1)*6)+1`.
+* Numbers can be written with a fraction and an exponent: `0.25`, `1.5E-7`, `3E8`.
+* `PRINT` shows up to 6 significant digits, rounded, and drops trailing zeros: `PRINT 1/3` prints `0.333333`, `PRINT 2/4` prints `0.5`. Below 0.01 and from 1000000 on (unless the number is whole) it uses the exponent form: `1.23457E6`, `1.5E-7`. `SET 24, n` changes the number of digits (1–7).
+* Bitwise operators, `%`, `PEEK`/`POKE` addresses and array indexes use the integer part of a number.
+* `SET 18, 1` switches to **integer arithmetic**: every result is cut to a whole number, `7/2` is 3 and `RND(6)` gives 0…5. Use it for programs written for an integer BASIC, as the first line: `10 SET 18, 1`. `SET 18, 0`, `NEW` and `LOAD` switch back to floating point.
+* `=` and `<>` compare exactly. Numbers that went through different calculations can differ in the last digit (`0.3*3` is not exactly `0.9`); `@P` sets a tolerance for these two comparisons, see [section 4.4](#44-special-variables-).
 
 ---
 
@@ -263,7 +275,7 @@ not the BASIC program memory. See [chapter 7](#7-memory-map-for-peek-and-poke). 
 Removes all variables and clears the stacks.
 
 #### `SET n, value`  **[UP]**
-Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that are useful on TinyELF:
+Changes interpreter properties. Settings survive `NEW` and `CLR`, except `SET 18`. The ones that are useful on TinyELF:
 
 | Call | Effect |
 |------|--------|
@@ -271,10 +283,12 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 | `SET 12, 0` | Arrays start at index 0 instead of 1. Any positive lower bound is allowed. |
 | `SET 16, n` | Default length of automatically created strings (default 32). |
 | `SET 17, 1` | C-style booleans (true = 1). Default is -1 (MS style). |
-| `SET 19, 1` | `RND(n)` returns 1…n instead of 0…n-1. |
+| `SET 18, 1` | Integer arithmetic, see [Numbers](#numbers). `SET 18, 0` switches back to floating point. **[HW]** |
+| `SET 19, 1` | `RND(n)` starts at 1 instead of 0: 1…n with `SET 18, 1`, otherwise from 1 up to, but not including, n+1. |
 | `SET 20, 0` | Switch off substring notation. |
 | `SET 21, 1` | `DIM A(10)` creates elements 0…10 (MS style). |
 | `SET 23, 1` | Allow lower-case names. |
+| `SET 24, n` | `PRINT` and `STR$` show `n` significant digits (1–7, default 6). **[HW]** |
 | `SET 25, 1` | Numbers in Microsoft style: `PRINT` puts a space before a positive number and after every number, `STR$(5)` is `" 5"`. **[HW]** |
 
 > Do **not** use `SET 1` (EEPROM autorun flag of the Arduino versions) or `SET 2`…`SET 5` (output/input device switching);
@@ -285,17 +299,20 @@ Changes interpreter properties. Settings survive `NEW` and `CLR`. The ones that 
 | Function | Description |
 |----------|-------------|
 | `ABS(x)` | Absolute value. **[UP]** |
-| `INT(x)` | Integer part (identity on this integer-only BASIC). **[UP]** |
+| `INT(x)` | The largest whole number not above `x`: `INT(3.7)` is 3, `INT(-2.5)` is -3. **[HW]** |
 | `SGN(x)` | -1, 0 or 1. **[UP]** |
-| `RND(n)` | Random number 0…n-1 (see `SET 19`). `RND(-n)` gives -n…-1. The seed is `@R`. **[UP]** |
-| `SQR(x)` | Integer square root. **[UP]** |
-| `POW(a, b)` | a to the power b (0 for a negative exponent). **[UP]** |
+| `RND(n)` | Random number from 0 up to, but not including, `n` (see `SET 19`): `RND(1)` is a fraction, `INT(RND(1)*6)+1` a dice. With `SET 18, 1` whole numbers 0…n-1. The seed is `@R`. **[HW]** |
+| `SQR(x)` | Square root. **[HW]** |
+| `SIN(x)`, `COS(x)`, `TAN(x)` | Sine, cosine and tangent of `x` in radians. Accurate for `x` up to about 100000. **[HW]** |
+| `ATAN(x)` | Arc tangent in radians (Microsoft BASIC calls it `ATN`): `4*ATAN(1)` is pi. **[HW]** |
+| `LOG(x)`, `EXP(x)` | Natural logarithm and e to the power `x`. **[HW]** |
+| `POW(a, b)` | `a` to the power `b`, same as `a^b`. **[HW]** |
 | `MAP(v, a, b, c, d)` | Maps `v` from range a…b to range c…d, like Arduino `map`. **[UP]** |
 | `LEN(s$)` | Length of a string. The argument can also be a string function: `LEN(MID$(A$,2))`. **[HW]** |
 | `BIT(v, n)` | Non-zero if bit `n` of `v` is set. **[UP]** |
 | `SIZE` | Free memory between program and variables. **[UP]** |
 | `HIMEM` | Topmost free memory cell. **[UP]** |
-| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Measured with the cartridge timer, so it also counts SaveKey commands and frames made longer by a larger time budget ([section 7.1](#71-interpreter-values-in-the-riot-mirror-ram)). The TV mode in the cartridge menu has to match the console (PAL60 counts as PAL), the frames are timed by it. In Gopher2600 `MILLIS` counts in steps of one frame: 16.69 ms with NTSC, 16.84 ms with PAL. **[HW]** |
+| `MILLIS(n)` | Milliseconds since power-on, divided by `n` (`MILLIS(1)` is plain milliseconds). Measured with the cartridge timer, so it also counts SaveKey commands and frames made longer by a larger time budget ([section 7.1](#71-interpreter-values-in-the-riot-mirror-ram)). The TV mode in the cartridge menu has to match the console (PAL60 counts as PAL), the frames are timed by it. In Gopher2600 `MILLIS` counts in steps of one frame: 16.69 ms with NTSC, 16.84 ms with PAL. **[HW]** `MILLIS` starts again at 0 after 16777215: `MILLIS(1)` after 4.6 hours, `MILLIS(1000)` after 194 days. **[??]** |
 | `PEEK(a)` | See above. **[HW]** |
 | `STICK(n)`, `STRIG(n)`, `PTRIG(n)` | Controllers, see [chapter 6](#6-controllers-stick-strig-ptrig). **[HW]** |
 
@@ -309,14 +326,14 @@ String functions **[HW]**. Every string argument can be any string expression, a
 | `MID$(s$, p, n)` | `n` characters from position `p`; `MID$(s$, p)` is the rest from position `p` on. |
 | `ASC(s$)` | Code of the first character, 0 for an empty string. |
 | `CHR$(n)` | A string of one character with code `n`. |
-| `STR$(n)` | The number as a string, without a leading space: `STR$(5)` is `"5"`. |
+| `STR$(n)` | The number as a string, without a leading space: `STR$(5)` is `"5"`, `STR$(1/4)` is `"0.25"`. |
 | `VAL(s$)` | The number at the start of the string: `VAL("12AB")` is 12, `VAL("X")` is 0. |
 | `INSTR(s$, f$)` | Position of `f$` in `s$`, 0 if it is not found. `INSTR(s$, f$, p)` starts the search at position `p`. |
 | `SPC(n)` | Only in `PRINT`: `n` spaces. |
 
 Operators: `+ - * / %`, power `^`, comparisons `= < > <= >= <>`, logic `NOT AND OR` (bitwise), shifts `<<` and `>>`
 (same precedence as `*`; `PRINT 1<<2` prints 4). **[UP]**
-`^` is evaluated left to right like the other operators (`2^3^2` is 64); a negative exponent gives 0.
+`^` is evaluated left to right like the other operators (`2^3^2` is 64). Whole exponents are calculated exactly (`2^10` is 1024, `2^(-1)` is 0.5), other exponents with `EXP` and `LOG` (`2^0.5` is 1.41421). **[HW]**
 
 ### 3.6 DATA, READ, RESTORE and DEF FN
 
@@ -353,6 +370,7 @@ Operators: `+ - * / %`, power `^`, comparisons `= < > <= >= <>`, logic `NOT AND 
   are the same variable. `LIST` shows each name as it was typed.
 * A keyword ends a name, which is why spaces are optional (`IFA=BTHEN…`, `FORI=ATOB`). For the same reason a name
   must not contain a keyword: `SCORE` is read as `SC OR E`, `POINTS` as `PO INT S`, `TOTAL` as `TO TAL`.
+* The functions `SIN`, `COS`, `TAN`, `ATAN`, `LOG` and `EXP` are keywords too: `TANK` is read as `TAN K`, `COST` as `COS T`. **[??]**
 * The whole name is stored at every place it is used, so long names cost program memory.
 * Variables live on a heap and are created on first use.
 
@@ -410,6 +428,7 @@ The `@` character starts variables that give access to system properties:
 | `@I`, `@O` | Current input/output stream number. |
 | `@S` | I/O error status. |
 | `@T` | Milliseconds since power-on, like `MILLIS(1)`. **[HW]** |
+| `@P` | Tolerance of `=` and `<>` (default 0): with `@P=0.0001`, two numbers that differ by at most 0.0001 count as equal. **[HW]** |
 | `@U` | User variable (reserved, no function on TinyELF yet). |
 
 ---
@@ -831,7 +850,6 @@ For readers who know Stefan's original `MANUAL.md`: the following parts **do not
 
 | Removed | Reason |
 |---------|--------|
-| Floating point (`SIN`, `COS`, `TAN`, `ATAN`, `LOG`, `EXP`, `SET 18`, `SET 24`, `@P`) | Integer-only build. |
 | Darkarts: `MALLOC`, `FIND`, `EVAL` | Not compiled in. |
 | IoT: `AVAIL`, `SENSOR`, `WIRE`, `SLEEP`, `NETSTAT` | Not compiled in. |
 | Timers and events: `AFTER`, `EVERY`, `EVENT` | Not compiled in. |
@@ -843,7 +861,7 @@ For readers who know Stefan's original `MANUAL.md`: the following parts **do not
 | `USR`, `CALL`, and the low-level extension mechanism | Not compiled in. |
 | Generic `COLOR`, `LINE`, `CIRCLE`, `RECT`, `FCIRCLE`, `FRECT` | Replaced by the Atari-style `GRAPHICS`/`PLOT`/`DRAWTO`. |
 | Hardware driver chapters (serial, second serial, wire, radio, MQTT, RTC, VGA, POSIX/Raspberry Pi/ESP special systems) | Not applicable. |
-| `SET` codes 1–11, 13–15 and 24 (hardware that is not present, floating point output) | Only the language-behaviour codes are meaningful on TinyELF. |
+| `SET` codes 1–11 and 13–15 (hardware that is not present) | Only the language-behaviour codes are meaningful on TinyELF. |
 | The error message texts | Only error numbers are printed. |
 
 **Added by TinyELF Basic:** `GRAPHICS`, `PLOT`, `DRAWTO`, `STICK`, `STRIG`, `PTRIG`, `FORMAT`, `CATALOG`, `LIST "file"`, `ENTER`, `DELETE`,
@@ -852,6 +870,7 @@ the E1–E8 filesystem, the hardware memory map for `PEEK`/`POKE`.
 **Different in TinyELF Basic:** long variable names follow the Microsoft rule, only the first two characters are significant
 ([section 4.1](#41-variables)). `MILLIS` and `DELAY` use the cartridge timer (in Gopher2600 frames of about 17 ms). ESC instead of `#` stops a program.
 `SET 25` (Microsoft style numbers) and the string comparisons with `<`, `>`, `<=`, `>=` are TinyELF additions.
+Floating point numbers are printed with 6 significant digits; `SET 24` sets the number of significant digits, not of decimals.
 
 ---
 
@@ -860,16 +879,17 @@ the E1–E8 filesystem, the hardware memory map for `PEEK`/`POKE`.
 All keywords:
 
 ```
-ABS       AND       ASC       BIT       BREAK     CATALOG   CHR$      CLR
-CLS       CONT      DATA      DEF       DELAY     DELETE    DIM       DRAWTO
-DUMP      ELSE      END       ENTER     ERROR     FN        FOR       FORMAT
-GET       GOSUB     GOTO      GRAPHICS  HIMEM     IF        INPUT     INSTR
-INT       LEFT$     LEN       LET       LIST      LOAD      LOCATE    MAP
-MID$      MILLIS    NEW       NEXT      NOT       ON        OR        PEEK
-PLOT      POKE      POW       PRINT     PTRIG     PUT       READ      REM
-RESTORE   RETURN    RIGHT$    RND       RUN       SAVE      SET       SGN
-SIZE      SPC       SQR       STEP      STICK     STOP      STR$      STRIG
-TAB       THEN      TO        VAL
+ABS       AND       ASC       ATAN      BIT       BREAK     CATALOG   CHR$
+CLR       CLS       CONT      COS       DATA      DEF       DELAY     DELETE
+DIM       DRAWTO    DUMP      ELSE      END       ENTER     ERROR     EXP
+FN        FOR       FORMAT    GET       GOSUB     GOTO      GRAPHICS  HIMEM
+IF        INPUT     INSTR     INT       LEFT$     LEN       LET       LIST
+LOAD      LOCATE    LOG       MAP       MID$      MILLIS    NEW       NEXT
+NOT       ON        OR        PEEK      PLOT      POKE      POW       PRINT
+PTRIG     PUT       READ      REM       RESTORE   RETURN    RIGHT$    RND
+RUN       SAVE      SET       SGN       SIN       SIZE      SPC       SQR
+STEP      STICK     STOP      STR$      STRIG     TAB       TAN       THEN
+TO        VAL
 ```
 
 Operators: `+ - * / % ^  = < > <= >= <>  << >>`.

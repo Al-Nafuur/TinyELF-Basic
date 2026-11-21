@@ -10,6 +10,9 @@
  */
 #include "language.h"
 #include "basic.h"
+#if defined(HASFLOAT) && !defined(HAS64BIT)
+#include "tinymath.h"
+#endif
 
 /* use long jump for error handling */
 #if USELONGJUMP == 1
@@ -1155,7 +1158,7 @@ char check_char(){
     return active_char;
 }
 
-void vcs_memwrite2(number_t address, number_t value){
+void vcs_memwrite2(number_t af, number_t value){ int address = (int)af;
   if (address & 0x1000){                   // Video RAM
     videoRAM[address & 0xfff] = value;     // Check for (address & 0xfff) <= 3360  (0xd20)
   }else if (address & 0x800){              // Character RAM
@@ -1173,7 +1176,7 @@ void vcs_memwrite2(number_t address, number_t value){
   }
 }
 
-mem_t vcs_memread2(number_t address){
+mem_t vcs_memread2(number_t af){ int address = (int)af;
   if (address & 0x1000){                   // Video RAM
     return videoRAM[address & 0xfff];     // Check for (address & 0xfff) <= 3360  (0xd20)
   }else if (address & 0x800){              // Character RAM
@@ -2015,7 +2018,7 @@ const number_t epsilon = 0;
 
 /* the number of digits displayed in the fraction of a float */
 #ifdef HASFLOAT
-mem_t precision = 5;
+mem_t precision = 6;
 #endif
 
 /*
@@ -4137,7 +4140,7 @@ address_t parsenumber(char *c, number_t *r) {
 
   *r = 0;
   while (*c >= '0' && *c <= '9' && *c != 0) {
-    *r = *r * 10 + *c++ -'0';
+    *r = *r * 10 + (*c++ - '0');
     nd++;
     if (nd == SBUFSIZE) break;
   }
@@ -4335,109 +4338,73 @@ address_t writenumbern(char *c, wnumber_t v, mem_t n) {
 
 #ifdef HASFLOAT
 /*
-   this is for floats, handling output without library
-   functions as well.
+   float output: precision (1-7, default 6) significant digits, rounded,
+   without trailing zeros; E notation below 0.01 and from 10^digits on.
+   Integers below maxnum are written by writenumber(). Powers of ten up to
+   1E10 are exact floats, so the scaling below rounds only once or twice.
 */
-address_t tinydtostrf(number_t v, index_t p, char* c) {
-  index_t i;
-  address_t nd = 0;
-  number_t f;
-
-  /* if we are in forced integer mode */
-  if (forceint) {
-    v = trunc(v);
-    return writenumber(c, (int)v);
-  }
-
-  /* we do the sign here */
-  if (v < 0) {
-    v = fabs(v);
-    c[nd++] = '-';
-  }
-
-  /* write the integer part */
-  nd += writenumber(c + nd, (int)v);
-  c[nd++] = '.';
-
-  /* only the fraction to precision p */
-  f = fabs(v);
-
-  /* get p digits of the fraction */
-  for (i = p; i > 0; i--) {
-    f = f - floor(f);
-    f = f * 10;
-    c[nd++] = (int)floor(f) + '0';
-  }
-
-  /* and a terminating 0 */
-  c[nd] = 0;
-  return nd;
-}
-
 address_t writenumber2(char *c, number_t vi) {
-  index_t i;
-  index_t nd;
-  number_t f;
-  index_t exponent = 0;
-  mem_t eflag = 0;
-  const int p = 5;
+  number_t f, p;
+  int32_t m, lim;
+  index_t e = 0, x = 0, nd = 0, i, digits;
+  char d[8];
 
-  /* pseudo integers are displayed as integer
-  		zero trapped here */
   f = floor(vi);
   if (f == vi && fabs(vi) < maxnum) return writenumber(c, vi);
 
-  /* earlier, floats where displayed in POSIx using the libraties
-     return sprintf(c, "%g", vi);
-     we dont do this any more
-  */
-
-  /* we check if we have anything to write */
   if (!isfinite(vi)) {
     c[0] = '*';
     c[1] = 0;
     return 1;
   }
 
-  /* normalize the number and see which exponent we have to deal with */
+  digits = (precision >= 1 && precision <= 7) ? precision : 6;
+  for (lim = 1, i = 1; i < digits; i++) lim *= 10;
+
+  if (vi < 0) {
+    c[nd++] = '-';
+    vi = -vi;
+  }
+
+  /* bring f to 1 <= f < 1E10 in steps of 1E10, then to lim <= f < 10*lim
+     with one exact power of ten; vi = m * 10^e afterwards */
   f = vi;
-  while (fabs(f) < 1.0)   {
-    f = f * 10;
-    exponent--;
+  while (f >= 1E10) { f = f / 1E10; e += 10; }
+  while (f < 1) { f = f * 1E10; e -= 10; }
+  for (i = 0, p = 1; p * 10 <= f; i++) p = p * 10;
+  i = digits - 1 - i;
+  for (p = 1; p < 1E10 && i > 0; i--) { p = p * 10; e--; }
+  f = f * p;
+  for (p = 1; i < 0; i++) { p = p * 10; e++; }
+  f = f / p;
+  m = (int32_t)(f + 0.5);
+  if (m >= lim * 10) { m = m / 10; e++; }
+  e += digits - 1;
+
+  for (i = digits - 1; i >= 0; i--) { d[i] = '0' + m % 10; m = m / 10; }
+  while (digits > 1 && d[digits - 1] == '0') digits--;
+
+  /* E notation: one digit before the point, the exponent x follows */
+  if (e < -2 || e >= digits) {
+    x = e;
+    e = 0;
   }
-  while (fabs(f) >= 10.0 - 0.00001) {
-    f = f / 10;
-    exponent++;
+  if (e < 0) {
+    c[nd++] = '0';
+    c[nd++] = '.';
+    for (i = -1; i > e; i--) c[nd++] = '0';
+  }
+  for (i = 0; i < digits || i <= e; i++) {
+    if (i == e + 1 && e >= 0) c[nd++] = '.';
+    c[nd++] = i < digits ? d[i] : '0';
+  }
+  if (x) {
+    c[nd++] = 'E';
+    nd += writenumber(c + nd, x);
   }
 
-  /* there are platforms where dtostrf is broken, we do things by hand in a simple way */
-
-  if (exponent > -2 && exponent < 7) {
-    tinydtostrf(vi, precision, c);
-  } else {
-    tinydtostrf(f, precision, c);
-    eflag = 1;
-  }
-
-  /* remove trailing zeros */
-  for (i = 0; (i < SBUFSIZE && c[i] != 0 ); i++);
-  i--;
-
-  /* */
-  while (c[i] == '0' && i > 1) {
-    i--;
-  }
-  i++;
-
-  /* add the exponent */
-  if (eflag && exponent != 0) {
-    c[i++] = 'E';
-    i += writenumber(c + i, exponent);
-  }
-
-  c[i] = 0;
-  return i;
-
+  c[nd] = 0;
+  return nd;
 }
 #endif
 
@@ -5953,7 +5920,14 @@ char stringvalue(string_t* strp) {
 #endif
 #else
 #ifdef HASFLOAT
-      strp->length = writenumber2(sbuffer, pop());
+      {
+        number_t n = pop();
+        if (msnumbers && n >= 0) {
+          *sbuffer = ' ';
+          strp->length = writenumber2(sbuffer + 1, n) + 1;
+        } else
+          strp->length = writenumber2(sbuffer, n);
+      }
 #else
 #ifdef HASMSSTRINGS
       {
@@ -8881,6 +8855,10 @@ void xnew() {
 
   /* reset the state of the interpreter */
   resetbasicstate();
+#ifdef HASFLOAT
+  /* TinyELF: a new program starts with floating point, SET 18 is not kept */
+  forceint = 0;
+#endif
 
   
   if (DEBUG) {
@@ -9197,7 +9175,7 @@ void xtab() {
 static uint8_t gfxLastX = 0, gfxLastY = 0;
 
 void xgraphics() {
-  number_t n;
+  int n;
   uint8_t mode, noTextWindow, noClear;
   nexttoken();
   expression();
@@ -13281,6 +13259,9 @@ void xload(const char *f) {
   }
 
   resetbasicstate(); /* reset interpreter state but keep the loaded program */
+#ifdef HASFLOAT
+  forceint = 0;      /* like NEW: the loaded program starts with floating point */
+#endif
   top = (address_t)outsize;
   nexttoken();
 }

@@ -9,10 +9,16 @@
 # Releases are built with GCC 14.2 (Arm GNU Toolchain 14.2.Rel1), which gives
 # a byte-identical copy of the released file. Select another toolchain with
 #   make PREFIX=<path>/bin/arm-none-eabi-
+#
+# The release is stripped: the firmware's ELF loader only needs elf_main and
+# the imported symbols by name, everything else it finds by section and
+# offset. That keeps the file below the 96 KiB the loader can run from RAM.
 
 PREFIX  ?= arm-none-eabi-
 CC      := $(PREFIX)gcc
 NM      := $(PREFIX)nm
+OBJCOPY := $(PREFIX)objcopy
+STRIP   := $(PREFIX)strip
 SIZE    := $(PREFIX)size
 
 VERSION := $(shell sed -n 's/.*"TinyELF Basic v\([0-9.]*\) ".*/\1/p' main.c)
@@ -22,7 +28,8 @@ endif
 TARGET  := TinyELF-Basic-v$(VERSION).bin
 
 SRCS    := $(sort $(wildcard *.c))
-CFLAGS  := -mlong-calls -fno-exceptions -fno-builtin-memmove -march=armv7-m -Os -Wall
+# -fsingle-precision-constant: number_t is float, keep 1.0 etc. out of double
+CFLAGS  := -mlong-calls -fno-exceptions -fno-builtin-memmove -march=armv7-m -Os -Wall -fsingle-precision-constant
 
 .PHONY: all check clean
 
@@ -31,6 +38,8 @@ all: $(TARGET)
 # one relocatable ELF (-r); tinyelf.ld keeps all variables out of .bss
 $(TARGET): $(SRCS) $(wildcard *.h) tinyelf.ld
 	$(CC) -r $(CFLAGS) -Wl,-T,tinyelf.ld $(SRCS) -o $@ -lgcc
+	$(OBJCOPY) -G elf_main $@
+	$(STRIP) --strip-unneeded $@
 
 check: $(TARGET)
 	$(SIZE) $(TARGET)
